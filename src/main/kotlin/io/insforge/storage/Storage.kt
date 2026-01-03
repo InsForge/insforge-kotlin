@@ -1,215 +1,202 @@
 package io.insforge.storage
 
 import io.insforge.InsforgeClient
-import io.insforge.InsforgeClientBuilder
 import io.insforge.exceptions.InsforgeHttpException
 import io.insforge.plugins.InsforgePlugin
 import io.insforge.plugins.InsforgePluginProvider
 import io.insforge.storage.models.*
 import io.ktor.client.call.*
 import io.ktor.client.request.*
-import io.ktor.client.request.forms.*
 import io.ktor.client.statement.*
 import io.ktor.http.*
-import io.ktor.utils.io.core.*
 import kotlinx.serialization.json.Json
 
 /**
  * Storage module for InsForge (S3-compatible object storage)
  *
- * Install this module in your Insforge client:
+ * Provides bucket-based file storage similar to AWS S3 or Supabase Storage.
+ * Supports both local storage and S3 backends transparently.
+ *
+ * ## Basic Usage
+ *
  * ```kotlin
  * val client = createInsforgeClient(baseURL, anonKey) {
- *     install(Storage)
+ *     install(Storage) {
+ *         defaultBucket = "avatars"
+ *         transferTimeout = 60.seconds
+ *     }
  * }
  *
- * // Create bucket
- * client.storage.createBucket("avatars", isPublic = true)
+ * // Access a bucket
+ * val bucket = client.storage["avatars"]
+ * // or
+ * val bucket = client.storage.from("avatars")
  *
- * // Upload file
- * client.storage.uploadFile("avatars", "user123.jpg", fileBytes, "image/jpeg")
+ * // Upload a file
+ * val result = bucket.upload("user123.jpg", imageBytes) {
+ *     contentType = "image/jpeg"
+ * }
  *
- * // Download file
- * val bytes = client.storage.downloadFile("avatars", "user123.jpg")
+ * // Download a file
+ * val bytes = bucket.download("user123.jpg")
+ *
+ * // Get download URL
+ * val url = bucket.createSignedUrl("user123.jpg", expiresIn = 3600)
+ *
+ * // List files
+ * val files = bucket.list {
+ *     prefix = "users/"
+ *     limit = 50
+ * }
+ *
+ * // Delete a file
+ * bucket.delete("user123.jpg")
+ * ```
+ *
+ * ## Bucket Management (Admin)
+ *
+ * ```kotlin
+ * // List all buckets
+ * val buckets = client.storage.listBuckets()
+ *
+ * // Create a bucket
+ * client.storage.createBucket("documents") {
+ *     isPublic = false
+ * }
+ *
+ * // Update bucket visibility
+ * client.storage.updateBucket("documents") {
+ *     isPublic = true
+ * }
+ *
+ * // Delete a bucket
+ * client.storage.deleteBucket("documents")
+ * ```
+ *
+ * ## Upload Strategies
+ *
+ * The SDK automatically handles different upload strategies:
+ * - **Direct upload**: For local storage backend, files are uploaded directly to InsForge
+ * - **Presigned upload**: For S3 backend, the SDK gets a presigned URL, uploads to S3, then confirms
+ *
+ * You can also manually control the upload process:
+ *
+ * ```kotlin
+ * // Get upload strategy
+ * val strategy = bucket.getUploadStrategy("photo.jpg", "image/jpeg", fileSize)
+ *
+ * when (strategy.method) {
+ *     UploadMethod.DIRECT -> {
+ *         // Upload directly to InsForge
+ *     }
+ *     UploadMethod.PRESIGNED -> {
+ *         // Upload to S3 using strategy.uploadUrl and strategy.fields
+ *         // Then confirm: bucket.confirmUpload(strategy.key, size, contentType)
+ *     }
+ * }
  * ```
  */
 class Storage internal constructor(
-    private val client: InsforgeClient,
+    internal val client: InsforgeClient,
     private val config: StorageConfig
 ) : InsforgePlugin<StorageConfig> {
 
     override val key: String = Storage.key
 
     private val baseUrl = "${client.baseURL}/api/storage"
+    private val bucketCache = mutableMapOf<String, BucketApi>()
 
-    // ============ Bucket Management ============
+    // ============ Bucket Access ============
 
     /**
-     * List all buckets
+     * Get a BucketApi for interacting with a specific bucket.
+     *
+     * @param bucketId The name/ID of the bucket
+     * @return BucketApi instance for the bucket
      */
-    suspend fun listBuckets(): List<BucketInfo> {
-        val response = client.httpClient.get("$baseUrl/buckets")
-        return handleResponse(response)
+    operator fun get(bucketId: String): BucketApi {
+        return bucketCache.getOrPut(bucketId) {
+            BucketApiImpl(bucketId, this)
+        }
     }
 
     /**
-     * Create a new bucket
+     * Get a BucketApi for interacting with a specific bucket.
+     *
+     * @param bucketId The name/ID of the bucket
+     * @return BucketApi instance for the bucket
      */
-    suspend fun createBucket(bucketName: String, isPublic: Boolean = true): CreateBucketResponse {
+    fun from(bucketId: String): BucketApi = get(bucketId)
+
+    // ============ Bucket Management (Admin) ============
+
+    /**
+     * List all buckets.
+     *
+     * @return List of Bucket objects
+     */
+    suspend fun listBuckets(): List<Bucket> {
+        val response = client.httpClient.get("$baseUrl/buckets")
+        return handleResponse<List<Bucket>>(response)
+    }
+
+    /**
+     * Create a new bucket.
+     *
+     * @param bucketId The name/ID for the new bucket
+     * @param builder Configuration for the bucket (public/private, allowed types, size limits)
+     */
+    suspend fun createBucket(bucketId: String, builder: BucketBuilder.() -> Unit = {}) {
+        val bucketBuilder = BucketBuilder().apply(builder)
         val response = client.httpClient.post("$baseUrl/buckets") {
             contentType(ContentType.Application.Json)
-            setBody(CreateBucketRequest(bucketName, isPublic))
-        }
-        return handleResponse(response)
-    }
-
-    /**
-     * Update bucket visibility
-     */
-    suspend fun updateBucket(bucketName: String, isPublic: Boolean): UpdateBucketResponse {
-        val response = client.httpClient.patch("$baseUrl/buckets/$bucketName") {
-            contentType(ContentType.Application.Json)
-            setBody(mapOf("isPublic" to isPublic))
-        }
-        return handleResponse(response)
-    }
-
-    /**
-     * Delete a bucket
-     */
-    suspend fun deleteBucket(bucketName: String): DeleteBucketResponse {
-        val response = client.httpClient.delete("$baseUrl/buckets/$bucketName/objects")
-        return handleResponse(response)
-    }
-
-    // ============ File Operations ============
-
-    /**
-     * Upload a file with specific key
-     */
-    suspend fun uploadFile(
-        bucketName: String,
-        key: String,
-        fileBytes: ByteArray,
-        contentType: String = "application/octet-stream"
-    ): StoredFile {
-        val response = client.httpClient.put("$baseUrl/buckets/$bucketName/objects/$key") {
-            setBody(MultiPartFormDataContent(
-                formData {
-                    append("file", fileBytes, Headers.build {
-                        append(HttpHeaders.ContentType, contentType)
-                        append(HttpHeaders.ContentDisposition, "filename=\"$key\"")
-                    })
-                }
+            setBody(CreateBucketRequest(
+                bucketName = bucketId,
+                isPublic = bucketBuilder.isPublic ?: true
             ))
         }
-        return handleResponse(response)
+        handleResponse<CreateBucketResponse>(response)
     }
 
     /**
-     * Upload a file with auto-generated key
+     * Update an existing bucket.
+     *
+     * @param bucketId The name/ID of the bucket to update
+     * @param builder New configuration for the bucket
      */
-    suspend fun uploadFile(
-        bucketName: String,
-        fileBytes: ByteArray,
-        filename: String,
-        contentType: String = "application/octet-stream"
-    ): StoredFile {
-        val response = client.httpClient.post("$baseUrl/buckets/$bucketName/objects") {
-            setBody(MultiPartFormDataContent(
-                formData {
-                    append("file", fileBytes, Headers.build {
-                        append(HttpHeaders.ContentType, contentType)
-                        append(HttpHeaders.ContentDisposition, "filename=\"$filename\"")
-                    })
-                }
+    suspend fun updateBucket(bucketId: String, builder: BucketBuilder.() -> Unit = {}) {
+        val bucketBuilder = BucketBuilder().apply(builder)
+        val response = client.httpClient.patch("$baseUrl/buckets/$bucketId") {
+            contentType(ContentType.Application.Json)
+            setBody(UpdateBucketRequest(
+                isPublic = bucketBuilder.isPublic ?: true
             ))
         }
-        return handleResponse(response)
+        handleResponse<UpdateBucketResponse>(response)
     }
 
     /**
-     * Get upload strategy (presigned URL for S3 or direct upload)
+     * Delete a bucket and all its contents.
+     *
+     * @param bucketId The name/ID of the bucket to delete
      */
-    suspend fun getUploadStrategy(
-        bucketName: String,
-        filename: String,
-        contentType: String? = null,
-        size: Int? = null
-    ): UploadStrategy {
-        val response = client.httpClient.post("$baseUrl/buckets/$bucketName/upload-strategy") {
-            contentType(ContentType.Application.Json)
-            setBody(UploadStrategyRequest(filename, contentType, size))
+    suspend fun deleteBucket(bucketId: String) {
+        val response = client.httpClient.delete("$baseUrl/buckets/$bucketId/objects")
+        handleResponse<DeleteBucketResponse>(response)
+        bucketCache.remove(bucketId)
+    }
+
+    /**
+     * Empty a bucket (delete all files but keep the bucket).
+     *
+     * @param bucketId The name/ID of the bucket to empty
+     */
+    suspend fun emptyBucket(bucketId: String) {
+        val bucket = get(bucketId)
+        val files = bucket.list()
+        files.forEach { file ->
+            bucket.delete(file.key)
         }
-        return handleResponse(response)
-    }
-
-    /**
-     * Confirm presigned upload (for S3)
-     */
-    suspend fun confirmUpload(
-        bucketName: String,
-        objectKey: String,
-        size: Int,
-        contentType: String? = null,
-        etag: String? = null
-    ): StoredFile {
-        val response = client.httpClient.post("$baseUrl/buckets/$bucketName/objects/$objectKey/confirm-upload") {
-            contentType(ContentType.Application.Json)
-            setBody(ConfirmUploadRequest(size, contentType, etag))
-        }
-        return handleResponse(response)
-    }
-
-    /**
-     * Download a file
-     */
-    suspend fun downloadFile(bucketName: String, key: String): ByteArray {
-        val response = client.httpClient.get("$baseUrl/buckets/$bucketName/objects/$key")
-        return when (response.status) {
-            HttpStatusCode.OK -> response.body()
-            else -> throw handleError(response)
-        }
-    }
-
-    /**
-     * Get download strategy (presigned URL for S3 private or direct URL)
-     */
-    suspend fun getDownloadStrategy(
-        bucketName: String,
-        objectKey: String,
-        expiresIn: Int = 3600
-    ): DownloadStrategy {
-        val response = client.httpClient.post("$baseUrl/buckets/$bucketName/objects/$objectKey/download-strategy") {
-            contentType(ContentType.Application.Json)
-            setBody(mapOf("expiresIn" to expiresIn))
-        }
-        return handleResponse(response)
-    }
-
-    /**
-     * Delete a file
-     */
-    suspend fun deleteFile(bucketName: String, key: String): DeleteFileResponse {
-        val response = client.httpClient.delete("$baseUrl/buckets/$bucketName/objects/$key")
-        return handleResponse(response)
-    }
-
-    /**
-     * List files in a bucket
-     */
-    suspend fun listFiles(
-        bucketName: String,
-        prefix: String? = null,
-        limit: Int = 100,
-        offset: Int = 0
-    ): ListFilesResponse {
-        val response = client.httpClient.get("$baseUrl/buckets/$bucketName/objects") {
-            prefix?.let { parameter("prefix", it) }
-            parameter("limit", limit)
-            parameter("offset", offset)
-        }
-        return handleResponse(response)
     }
 
     // ============ Helper Methods ============
@@ -234,7 +221,7 @@ class Storage internal constructor(
         val error = try {
             Json.decodeFromString<io.insforge.exceptions.ErrorResponse>(errorBody)
         } catch (e: Exception) {
-            throw InsforgeHttpException(
+            return InsforgeHttpException(
                 statusCode = response.status.value,
                 error = "UNKNOWN_ERROR",
                 message = errorBody.ifEmpty { response.status.description }
@@ -263,7 +250,13 @@ class Storage internal constructor(
 }
 
 /**
- * Extension property for accessing Storage module
+ * Extension property for accessing Storage module.
+ *
+ * Usage:
+ * ```kotlin
+ * val bucket = client.storage["avatars"]
+ * val files = bucket.list()
+ * ```
  */
 val InsforgeClient.storage: Storage
     get() = plugin(Storage.key)

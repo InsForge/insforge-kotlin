@@ -2,11 +2,18 @@ package io.insforge.storage
 
 import io.insforge.TestConfig
 import io.insforge.exceptions.InsforgeHttpException
+import io.insforge.storage.models.UploadMethod
 import kotlinx.coroutines.test.runTest
 import kotlin.test.*
 
 /**
  * Integration tests for Storage module
+ *
+ * Tests the Supabase-style Storage API including:
+ * - Bucket management (create, update, delete, list)
+ * - File operations via BucketApi (upload, download, delete, list)
+ * - Upload strategies (direct and presigned)
+ * - Download strategies
  */
 class StorageTest {
 
@@ -23,6 +30,20 @@ class StorageTest {
         client.close()
     }
 
+    // ============ Bucket Access Tests ============
+
+    @Test
+    fun `test bucket access via index operator`() = runTest {
+        val bucket = client.storage["avatars"]
+        assertEquals("avatars", bucket.bucketId)
+    }
+
+    @Test
+    fun `test bucket access via from method`() = runTest {
+        val bucket = client.storage.from("avatars")
+        assertEquals("avatars", bucket.bucketId)
+    }
+
     // ============ Bucket Management Tests ============
 
     @Test
@@ -31,7 +52,7 @@ class StorageTest {
             val buckets = client.storage.listBuckets()
             println("Available buckets: ${buckets.size}")
             buckets.forEach { bucket ->
-                println("  - ${bucket.name} (public: ${bucket.public})")
+                println("  - ${bucket.name} (public: ${bucket.isPublic})")
             }
         } catch (e: InsforgeHttpException) {
             println("List buckets failed: ${e.message}")
@@ -39,13 +60,18 @@ class StorageTest {
     }
 
     @Test
-    fun `test create bucket`() = runTest {
+    fun `test create bucket with builder`() = runTest {
         val bucketName = "test-${System.currentTimeMillis()}"
 
         try {
-            val response = client.storage.createBucket(bucketName, isPublic = true)
-            println("Created bucket: ${response.bucketName}")
-            assertTrue(response.bucketName.isNotEmpty())
+            client.storage.createBucket(bucketName) {
+                isPublic = true
+            }
+            println("Created bucket: $bucketName")
+
+            // Verify bucket exists in list
+            val buckets = client.storage.listBuckets()
+            assertTrue(buckets.any { it.name == bucketName })
 
             // Cleanup - delete the bucket
             client.storage.deleteBucket(bucketName)
@@ -59,8 +85,10 @@ class StorageTest {
         val bucketName = "private-test-${System.currentTimeMillis()}"
 
         try {
-            val response = client.storage.createBucket(bucketName, isPublic = false)
-            println("Created private bucket: ${response.bucketName}")
+            client.storage.createBucket(bucketName) {
+                isPublic = false
+            }
+            println("Created private bucket: $bucketName")
 
             // Cleanup
             client.storage.deleteBucket(bucketName)
@@ -75,11 +103,15 @@ class StorageTest {
 
         try {
             // Create bucket
-            client.storage.createBucket(bucketName, isPublic = true)
+            client.storage.createBucket(bucketName) {
+                isPublic = true
+            }
 
             // Update to private
-            val response = client.storage.updateBucket(bucketName, isPublic = false)
-            println("Updated bucket: ${response.bucket}")
+            client.storage.updateBucket(bucketName) {
+                isPublic = false
+            }
+            println("Updated bucket to private: $bucketName")
 
             // Cleanup
             client.storage.deleteBucket(bucketName)
@@ -94,36 +126,39 @@ class StorageTest {
 
         try {
             // Create bucket
-            client.storage.createBucket(bucketName, isPublic = true)
+            client.storage.createBucket(bucketName)
 
             // Delete bucket
-            val response = client.storage.deleteBucket(bucketName)
-            println("Deleted bucket: ${response.message}")
+            client.storage.deleteBucket(bucketName)
+            println("Deleted bucket: $bucketName")
+
+            // Verify bucket no longer exists
+            val buckets = client.storage.listBuckets()
+            assertFalse(buckets.any { it.name == bucketName })
         } catch (e: InsforgeHttpException) {
             println("Delete bucket failed: ${e.message}")
         }
     }
 
-    // ============ File Upload Tests ============
+    // ============ BucketApi Upload Tests ============
 
     @Test
-    fun `test upload file with specific key`() = runTest {
+    fun `test upload file via bucket api`() = runTest {
         try {
+            val bucket = client.storage[testBucketName]
             val testContent = "Hello, Insforge Storage!".toByteArray()
             val key = "test-file-${System.currentTimeMillis()}.txt"
 
-            val result = client.storage.uploadFile(
-                bucketName = testBucketName,
-                key = key,
-                fileBytes = testContent,
+            val result = bucket.upload(key, testContent) {
                 contentType = "text/plain"
-            )
+            }
 
             println("Uploaded file: ${result.key}")
-            assertNotNull(result.key)
+            assertEquals(key, result.key)
+            assertEquals(testContent.size.toLong(), result.size)
 
             // Cleanup
-            client.storage.deleteFile(testBucketName, key)
+            bucket.delete(key)
         } catch (e: InsforgeHttpException) {
             println("Upload file failed: ${e.message}")
         }
@@ -132,21 +167,19 @@ class StorageTest {
     @Test
     fun `test upload file with auto-generated key`() = runTest {
         try {
+            val bucket = client.storage[testBucketName]
             val testContent = "Auto-key test content".toByteArray()
             val filename = "auto-test-${System.currentTimeMillis()}.txt"
 
-            val result = client.storage.uploadFile(
-                bucketName = testBucketName,
-                fileBytes = testContent,
-                filename = filename,
+            val result = bucket.uploadWithAutoKey(filename, testContent) {
                 contentType = "text/plain"
-            )
+            }
 
             println("Uploaded file with auto key: ${result.key}")
             assertNotNull(result.key)
 
             // Cleanup
-            client.storage.deleteFile(testBucketName, result.key)
+            bucket.delete(result.key)
         } catch (e: InsforgeHttpException) {
             println("Upload with auto key failed: ${e.message}")
         }
@@ -155,10 +188,12 @@ class StorageTest {
     @Test
     fun `test upload image file`() = runTest {
         try {
+            val bucket = client.storage[testBucketName]
+
             // Create a simple 1x1 PNG image (smallest valid PNG)
             val pngBytes = byteArrayOf(
-                0x89.toByte(), 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A,  // PNG signature
-                0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52,  // IHDR chunk
+                0x89.toByte(), 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A,
+                0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52,
                 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01,
                 0x08, 0x02, 0x00, 0x00, 0x00, 0x90.toByte(), 0x77, 0x53,
                 0xDE.toByte(), 0x00, 0x00, 0x00, 0x0C, 0x49, 0x44, 0x41,
@@ -170,47 +205,73 @@ class StorageTest {
 
             val key = "test-image-${System.currentTimeMillis()}.png"
 
-            val result = client.storage.uploadFile(
-                bucketName = testBucketName,
-                key = key,
-                fileBytes = pngBytes,
+            val result = bucket.upload(key, pngBytes) {
                 contentType = "image/png"
-            )
+            }
 
             println("Uploaded image: ${result.key}")
+            assertEquals("image/png", result.mimeType)
 
             // Cleanup
-            client.storage.deleteFile(testBucketName, key)
+            bucket.delete(key)
         } catch (e: InsforgeHttpException) {
             println("Upload image failed: ${e.message}")
         }
     }
 
-    // ============ File Download Tests ============
+    @Test
+    fun `test upload with upsert option`() = runTest {
+        try {
+            val bucket = client.storage[testBucketName]
+            val key = "upsert-test-${System.currentTimeMillis()}.txt"
+
+            // First upload
+            bucket.upload(key, "Version 1".toByteArray()) {
+                contentType = "text/plain"
+            }
+
+            // Upsert (overwrite)
+            val result = bucket.upload(key, "Version 2".toByteArray()) {
+                contentType = "text/plain"
+                upsert = true
+            }
+
+            println("Upserted file: ${result.key}")
+
+            // Verify content
+            val content = bucket.download(key)
+            assertEquals("Version 2", String(content))
+
+            // Cleanup
+            bucket.delete(key)
+        } catch (e: InsforgeHttpException) {
+            println("Upload with upsert failed: ${e.message}")
+        }
+    }
+
+    // ============ BucketApi Download Tests ============
 
     @Test
-    fun `test download file`() = runTest {
+    fun `test download file via bucket api`() = runTest {
         try {
+            val bucket = client.storage[testBucketName]
             val testContent = "Download test content"
             val key = "download-test-${System.currentTimeMillis()}.txt"
 
             // Upload first
-            client.storage.uploadFile(
-                bucketName = testBucketName,
-                key = key,
-                fileBytes = testContent.toByteArray(),
+            bucket.upload(key, testContent.toByteArray()) {
                 contentType = "text/plain"
-            )
+            }
 
             // Download
-            val downloadedBytes = client.storage.downloadFile(testBucketName, key)
+            val downloadedBytes = bucket.download(key)
             val downloadedContent = String(downloadedBytes)
 
             assertEquals(testContent, downloadedContent)
             println("Downloaded content: $downloadedContent")
 
             // Cleanup
-            client.storage.deleteFile(testBucketName, key)
+            bucket.delete(key)
         } catch (e: InsforgeHttpException) {
             println("Download file failed: ${e.message}")
         }
@@ -218,10 +279,34 @@ class StorageTest {
 
     @Test
     fun `test download non-existent file`() = runTest {
+        val bucket = client.storage[testBucketName]
         val exception = assertFailsWith<InsforgeHttpException> {
-            client.storage.downloadFile(testBucketName, "non-existent-file.txt")
+            bucket.download("non-existent-file-${System.currentTimeMillis()}.txt")
         }
         println("Expected error: ${exception.error} - ${exception.message}")
+    }
+
+    @Test
+    fun `test create signed url`() = runTest {
+        try {
+            val bucket = client.storage[testBucketName]
+            val key = "signed-url-test-${System.currentTimeMillis()}.txt"
+
+            // Upload first
+            bucket.upload(key, "Signed URL test".toByteArray()) {
+                contentType = "text/plain"
+            }
+
+            // Get signed URL
+            val signedUrl = bucket.createSignedUrl(key, expiresIn = 3600)
+            println("Signed URL: $signedUrl")
+            assertTrue(signedUrl.isNotEmpty())
+
+            // Cleanup
+            bucket.delete(key)
+        } catch (e: InsforgeHttpException) {
+            println("Create signed URL failed: ${e.message}")
+        }
     }
 
     // ============ Upload/Download Strategy Tests ============
@@ -229,8 +314,8 @@ class StorageTest {
     @Test
     fun `test get upload strategy`() = runTest {
         try {
-            val strategy = client.storage.getUploadStrategy(
-                bucketName = testBucketName,
+            val bucket = client.storage[testBucketName]
+            val strategy = bucket.getUploadStrategy(
                 filename = "strategy-test.txt",
                 contentType = "text/plain",
                 size = 1024
@@ -238,6 +323,18 @@ class StorageTest {
 
             println("Upload strategy: ${strategy.method}")
             println("URL: ${strategy.uploadUrl}")
+            println("Key: ${strategy.key}")
+            println("Confirm required: ${strategy.confirmRequired}")
+
+            when (strategy.method) {
+                UploadMethod.DIRECT -> {
+                    println("Using direct upload to InsForge")
+                }
+                UploadMethod.PRESIGNED -> {
+                    println("Using presigned upload to S3")
+                    assertNotNull(strategy.fields)
+                }
+            }
         } catch (e: InsforgeHttpException) {
             println("Get upload strategy failed: ${e.message}")
         }
@@ -246,40 +343,37 @@ class StorageTest {
     @Test
     fun `test get download strategy`() = runTest {
         try {
+            val bucket = client.storage[testBucketName]
             val key = "strategy-download-test-${System.currentTimeMillis()}.txt"
 
             // Upload a file first
-            client.storage.uploadFile(
-                bucketName = testBucketName,
-                key = key,
-                fileBytes = "Test content".toByteArray(),
+            bucket.upload(key, "Test content".toByteArray()) {
                 contentType = "text/plain"
-            )
+            }
 
-            val strategy = client.storage.getDownloadStrategy(
-                bucketName = testBucketName,
-                objectKey = key,
-                expiresIn = 3600
-            )
+            val strategy = bucket.getDownloadUrl(key, expiresIn = 3600)
 
             println("Download strategy: ${strategy.method}")
             println("URL: ${strategy.url}")
+            strategy.expiresAt?.let { println("Expires at: $it") }
 
             // Cleanup
-            client.storage.deleteFile(testBucketName, key)
+            bucket.delete(key)
         } catch (e: InsforgeHttpException) {
             println("Get download strategy failed: ${e.message}")
         }
     }
 
-    // ============ File List Tests ============
+    // ============ BucketApi List Tests ============
 
     @Test
     fun `test list files in bucket`() = runTest {
         try {
-            val response = client.storage.listFiles(testBucketName)
-            println("Files in bucket: ${response.data.size}")
-            response.data.forEach { file ->
+            val bucket = client.storage[testBucketName]
+            val files = bucket.list()
+
+            println("Files in bucket: ${files.size}")
+            files.forEach { file ->
                 println("  - ${file.key} (${file.size} bytes)")
             }
         } catch (e: InsforgeHttpException) {
@@ -288,52 +382,114 @@ class StorageTest {
     }
 
     @Test
-    fun `test list files with prefix`() = runTest {
+    fun `test list files with filter`() = runTest {
         try {
-            val response = client.storage.listFiles(
-                bucketName = testBucketName,
+            val bucket = client.storage[testBucketName]
+            val files = bucket.list {
                 prefix = "images/"
-            )
-            println("Files with prefix 'images/': ${response.data.size}")
-        } catch (e: InsforgeHttpException) {
-            println("List files with prefix failed: ${e.message}")
-        }
-    }
-
-    @Test
-    fun `test list files with pagination`() = runTest {
-        try {
-            val response = client.storage.listFiles(
-                bucketName = testBucketName,
-                limit = 5,
+                limit = 10
                 offset = 0
-            )
-            println("Files (page 1, limit 5): ${response.data.size}")
+            }
+
+            println("Files with prefix 'images/': ${files.size}")
         } catch (e: InsforgeHttpException) {
-            println("List files with pagination failed: ${e.message}")
+            println("List files with filter failed: ${e.message}")
         }
     }
 
-    // ============ File Delete Tests ============
+    @Test
+    fun `test check file exists`() = runTest {
+        try {
+            val bucket = client.storage[testBucketName]
+            val key = "exists-test-${System.currentTimeMillis()}.txt"
+
+            // Initially should not exist
+            assertFalse(bucket.exists(key))
+
+            // Upload
+            bucket.upload(key, "Test".toByteArray())
+
+            // Now should exist
+            assertTrue(bucket.exists(key))
+
+            // Cleanup
+            bucket.delete(key)
+
+            // Should not exist again
+            assertFalse(bucket.exists(key))
+        } catch (e: InsforgeHttpException) {
+            println("Check exists failed: ${e.message}")
+        }
+    }
+
+    // ============ BucketApi Delete Tests ============
 
     @Test
-    fun `test delete file`() = runTest {
+    fun `test delete single file`() = runTest {
         try {
+            val bucket = client.storage[testBucketName]
             val key = "delete-me-${System.currentTimeMillis()}.txt"
 
             // Upload first
-            client.storage.uploadFile(
-                bucketName = testBucketName,
-                key = key,
-                fileBytes = "To be deleted".toByteArray(),
-                contentType = "text/plain"
-            )
+            bucket.upload(key, "To be deleted".toByteArray())
 
             // Delete
-            val response = client.storage.deleteFile(testBucketName, key)
-            println("Deleted file: ${response.message}")
+            bucket.delete(key)
+            println("Deleted file: $key")
+
+            // Verify deleted
+            assertFalse(bucket.exists(key))
         } catch (e: InsforgeHttpException) {
             println("Delete file failed: ${e.message}")
+        }
+    }
+
+    @Test
+    fun `test delete multiple files`() = runTest {
+        try {
+            val bucket = client.storage[testBucketName]
+            val timestamp = System.currentTimeMillis()
+            val keys = listOf(
+                "batch-delete-1-$timestamp.txt",
+                "batch-delete-2-$timestamp.txt",
+                "batch-delete-3-$timestamp.txt"
+            )
+
+            // Upload files
+            keys.forEach { key ->
+                bucket.upload(key, "Delete me".toByteArray())
+            }
+
+            // Delete all
+            bucket.delete(keys)
+            println("Deleted ${keys.size} files")
+
+            // Verify all deleted
+            keys.forEach { key ->
+                assertFalse(bucket.exists(key))
+            }
+        } catch (e: InsforgeHttpException) {
+            println("Delete multiple files failed: ${e.message}")
+        }
+    }
+
+    @Test
+    fun `test delete with vararg`() = runTest {
+        try {
+            val bucket = client.storage[testBucketName]
+            val timestamp = System.currentTimeMillis()
+            val key1 = "vararg-delete-1-$timestamp.txt"
+            val key2 = "vararg-delete-2-$timestamp.txt"
+
+            // Upload files
+            bucket.upload(key1, "Delete me 1".toByteArray())
+            bucket.upload(key2, "Delete me 2".toByteArray())
+
+            // Delete using vararg
+            bucket.delete(key1, key2)
+            println("Deleted files using vararg")
+        } catch (e: InsforgeHttpException) {
+            println("Delete with vararg failed: ${e.message}")
         }
     }
 
@@ -341,13 +497,9 @@ class StorageTest {
 
     @Test
     fun `test upload to non-existent bucket`() = runTest {
+        val bucket = client.storage["non-existent-bucket-${System.currentTimeMillis()}"]
         val exception = assertFailsWith<InsforgeHttpException> {
-            client.storage.uploadFile(
-                bucketName = "non-existent-bucket-${System.currentTimeMillis()}",
-                key = "test.txt",
-                fileBytes = "test".toByteArray(),
-                contentType = "text/plain"
-            )
+            bucket.upload("test.txt", "test".toByteArray())
         }
         println("Expected error: ${exception.error} - ${exception.message}")
     }
@@ -355,8 +507,38 @@ class StorageTest {
     @Test
     fun `test create bucket with invalid name`() = runTest {
         val exception = assertFailsWith<InsforgeHttpException> {
-            client.storage.createBucket("INVALID_BUCKET_NAME!!!", isPublic = true)
+            client.storage.createBucket("INVALID_BUCKET_NAME!!!")
         }
         println("Expected error: ${exception.error} - ${exception.message}")
+    }
+
+    @Test
+    fun `test upload empty data`() = runTest {
+        val bucket = client.storage[testBucketName]
+        val exception = assertFailsWith<IllegalArgumentException> {
+            bucket.upload("empty.txt", byteArrayOf())
+        }
+        println("Expected error: ${exception.message}")
+    }
+
+    // ============ Content Type Detection Tests ============
+
+    @Test
+    fun `test content type auto detection`() = runTest {
+        try {
+            val bucket = client.storage[testBucketName]
+
+            // Upload without specifying content type - should auto-detect
+            val key = "auto-detect-${System.currentTimeMillis()}.json"
+            val result = bucket.upload(key, """{"test": true}""".toByteArray())
+
+            println("Auto-detected content type: ${result.mimeType}")
+            assertEquals("application/json", result.mimeType)
+
+            // Cleanup
+            bucket.delete(key)
+        } catch (e: InsforgeHttpException) {
+            println("Content type auto detection failed: ${e.message}")
+        }
     }
 }
