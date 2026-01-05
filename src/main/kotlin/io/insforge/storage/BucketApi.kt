@@ -87,6 +87,34 @@ interface BucketApi {
         options: UploadOptions.() -> Unit = {}
     ): FileUploadResponse
 
+    /**
+     * Upload a file from java.io.File to the bucket.
+     *
+     * @param path The path/key where the file will be stored
+     * @param file The File to upload
+     * @param options Additional upload options (content type auto-detected if not specified)
+     * @return FileUploadResponse containing the uploaded file information
+     * @throws IllegalArgumentException if file doesn't exist or is empty
+     * @throws InsforgeHttpException on API errors
+     */
+    suspend fun upload(
+        path: String,
+        file: java.io.File,
+        options: UploadOptions.() -> Unit = {}
+    ): FileUploadResponse
+
+    /**
+     * Upload a file from java.io.File with auto-generated key.
+     *
+     * @param file The File to upload (filename used for key generation)
+     * @param options Additional upload options
+     * @return FileUploadResponse containing the uploaded file information
+     */
+    suspend fun uploadWithAutoKey(
+        file: java.io.File,
+        options: UploadOptions.() -> Unit = {}
+    ): FileUploadResponse
+
     // ============ Download Operations ============
 
     /**
@@ -286,6 +314,51 @@ internal class BucketApiImpl(
                 // Upload to S3 using presigned URL, then confirm
                 uploadPresigned(strategy, data, contentType, uploadOptions)
             }
+        }
+    }
+
+    override suspend fun upload(
+        path: String,
+        file: java.io.File,
+        options: UploadOptions.() -> Unit
+    ): FileUploadResponse {
+        require(file.exists()) { "File does not exist: ${file.absolutePath}" }
+        require(file.length() > 0) { "File is empty: ${file.absolutePath}" }
+
+        val data = file.readBytes()
+        val uploadOptions = UploadOptions().apply(options)
+
+        // Auto-detect content type from file extension if not specified
+        if (uploadOptions.contentType == null) {
+            uploadOptions.contentType = detectContentType(file.name)
+        }
+
+        return upload(path, data) {
+            contentType = uploadOptions.contentType
+            upsert = uploadOptions.upsert
+            metadata = uploadOptions.metadata
+        }
+    }
+
+    override suspend fun uploadWithAutoKey(
+        file: java.io.File,
+        options: UploadOptions.() -> Unit
+    ): FileUploadResponse {
+        require(file.exists()) { "File does not exist: ${file.absolutePath}" }
+        require(file.length() > 0) { "File is empty: ${file.absolutePath}" }
+
+        val data = file.readBytes()
+        val uploadOptions = UploadOptions().apply(options)
+
+        // Auto-detect content type from file extension if not specified
+        if (uploadOptions.contentType == null) {
+            uploadOptions.contentType = detectContentType(file.name)
+        }
+
+        return uploadWithAutoKey(file.name, data) {
+            contentType = uploadOptions.contentType
+            upsert = uploadOptions.upsert
+            metadata = uploadOptions.metadata
         }
     }
 

@@ -83,10 +83,18 @@ class TableQuery @PublishedApi internal constructor(
     }
 
     /**
-     * LIKE filter (pattern matching)
+     * LIKE filter (case-sensitive pattern matching)
      */
     fun like(column: String, pattern: String): TableQuery {
         filters[column] = "like.$pattern"
+        return this
+    }
+
+    /**
+     * ILIKE filter (case-insensitive pattern matching)
+     */
+    fun ilike(column: String, pattern: String): TableQuery {
+        filters[column] = "ilike.$pattern"
         return this
     }
 
@@ -127,6 +135,20 @@ class TableQuery @PublishedApi internal constructor(
      */
     fun offset(count: Int): TableQuery {
         this.offsetValue = count
+        return this
+    }
+
+    /**
+     * Pagination using range (inclusive).
+     *
+     * Example: `.range(0, 9)` returns the first 10 records (rows 0-9).
+     *
+     * @param from Starting index (0-based, inclusive)
+     * @param to Ending index (inclusive)
+     */
+    fun range(from: Int, to: Int): TableQuery {
+        this.offsetValue = from
+        this.limitValue = to - from + 1
         return this
     }
 
