@@ -18,6 +18,13 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.put
+import java.util.concurrent.ConcurrentHashMap
 
 /**
  * Realtime module for InsForge (WebSocket pub/sub channels)
@@ -31,12 +38,40 @@ import kotlinx.serialization.json.Json
  * // Connect to realtime
  * client.realtime.connect()
  *
+ * // === High-Level API (Recommended) ===
+ *
+ * // Create a channel with configuration
+ * val channel = client.realtime.channel("room-1") {
+ *     broadcast {
+ *         acknowledgeBroadcasts = true
+ *     }
+ * }
+ *
+ * // Listen for broadcast messages
+ * channel.broadcastFlow<Message>("chat")
+ *     .onEach { println("Received: $it") }
+ *     .launchIn(scope)
+ *
+ * // Listen for database changes
+ * channel.postgresChangeFlow<PostgresAction.Insert>(schema = "public") {
+ *     table = "messages"
+ * }.onEach { println("New: ${it.record}") }
+ *   .launchIn(scope)
+ *
  * // Subscribe to channel
+ * channel.subscribe(blockUntilSubscribed = true)
+ *
+ * // Send a broadcast
+ * channel.broadcast("chat", buildJsonObject { put("text", "Hello!") })
+ *
+ * // === Low-Level API ===
+ *
+ * // Subscribe to channel (legacy)
  * client.realtime.subscribe("chat:room1") { message ->
  *     println("Received: ${message.payload}")
  * }
  *
- * // Publish message
+ * // Publish message (legacy)
  * client.realtime.publish("chat:room1", "message.new", mapOf("text" to "Hello"))
  * ```
  */
@@ -60,11 +95,89 @@ class Realtime internal constructor(
 
     private val scope = CoroutineScope(Dispatchers.Default + SupervisorJob())
 
+    // High-level channel management
+    private val channels = ConcurrentHashMap<String, InsforgeChannelImpl>()
+    private var messageRef = 0
+
+    private val json = Json {
+        ignoreUnknownKeys = true
+        isLenient = true
+    }
+
     sealed class ConnectionState {
         object Disconnected : ConnectionState()
         object Connecting : ConnectionState()
         object Connected : ConnectionState()
         data class Error(val message: String) : ConnectionState()
+    }
+
+    // ============ High-Level Channel API ============
+
+    /**
+     * Create or get an existing channel.
+     *
+     * This is the recommended way to interact with realtime features.
+     *
+     * @param topic Channel topic/name
+     * @param configure Optional channel configuration
+     * @return InsforgeChannel instance
+     *
+     * Example:
+     * ```kotlin
+     * val channel = client.realtime.channel("room-1") {
+     *     broadcast {
+     *         acknowledgeBroadcasts = true
+     *     }
+     * }
+     *
+     * // Setup listeners BEFORE subscribing
+     * channel.broadcastFlow<Message>("chat")
+     *     .onEach { println(it) }
+     *     .launchIn(scope)
+     *
+     * channel.postgresChangeFlow<PostgresAction.Insert>("public") {
+     *     table = "messages"
+     * }.onEach { println(it.record) }
+     *   .launchIn(scope)
+     *
+     * // Subscribe to channel
+     * channel.subscribe(blockUntilSubscribed = true)
+     * ```
+     */
+    fun channel(
+        topic: String,
+        configure: InsforgeChannelBuilder.() -> Unit = {}
+    ): InsforgeChannel {
+        return channels.getOrPut(topic) {
+            val builder = InsforgeChannelBuilder(topic).apply(configure)
+            InsforgeChannelImpl(
+                topic = topic,
+                realtime = this,
+                broadcastConfig = builder.broadcastConfig,
+                presenceConfig = builder.presenceConfig
+            )
+        }
+    }
+
+    /**
+     * Remove a channel from management.
+     *
+     * @param topic Channel topic to remove
+     */
+    suspend fun removeChannel(topic: String) {
+        channels.remove(topic)?.let { channel ->
+            if (channel.status.value == InsforgeChannel.Status.SUBSCRIBED) {
+                channel.unsubscribe()
+            }
+            channel.close()
+        }
+    }
+
+    /**
+     * Remove all channels
+     */
+    suspend fun removeAllChannels() {
+        channels.keys.toList().forEach { removeChannel(it) }
     }
 
     // ============ WebSocket Connection ============
@@ -100,8 +213,26 @@ class Realtime internal constructor(
                             if (frame is Frame.Text) {
                                 val text = frame.readText()
                                 try {
-                                    val message = Json.decodeFromString<RealtimeMessage>(text)
-                                    messageChannel.send(message)
+                                    // Try to parse as channel message (high-level API)
+                                    val jsonElement = json.parseToJsonElement(text)
+                                    if (jsonElement is JsonObject) {
+                                        val topic = jsonElement["topic"]?.jsonPrimitive?.contentOrNull
+                                        val event = jsonElement["event"]?.jsonPrimitive?.contentOrNull
+                                        val payload = jsonElement["payload"]?.jsonObject
+
+                                        if (topic != null && event != null && payload != null) {
+                                            // Route to high-level channel
+                                            routeMessageToChannel(topic, event, payload)
+                                        }
+                                    }
+
+                                    // Also try legacy message format
+                                    try {
+                                        val message = json.decodeFromString<RealtimeMessage>(text)
+                                        messageChannel.send(message)
+                                    } catch (e: Exception) {
+                                        // Not a legacy message format
+                                    }
                                 } catch (e: Exception) {
                                     // Ignore parsing errors
                                 }
@@ -333,6 +464,57 @@ class Realtime internal constructor(
         return handleResponse(response)
     }
 
+    // ============ Internal Methods for Channel Support ============
+
+    /**
+     * Send a message to a channel topic (internal use by InsforgeChannelImpl)
+     */
+    internal suspend fun sendChannelMessage(topic: String, event: String, payload: JsonObject) {
+        val ref = ++messageRef
+        val message = buildJsonObject {
+            put("topic", topic)
+            put("event", event)
+            put("payload", payload)
+            put("ref", ref.toString())
+        }
+        wsSession?.send(Frame.Text(json.encodeToString(message)))
+    }
+
+    /**
+     * Send broadcast via HTTP (used when not connected via WebSocket)
+     */
+    internal suspend fun broadcastViaHttp(topic: String, event: String, payload: JsonObject) {
+        client.httpClient.post("$baseUrl/broadcast") {
+            contentType(ContentType.Application.Json)
+            setBody(buildJsonObject {
+                put("topic", topic)
+                put("event", event)
+                put("payload", payload)
+            })
+        }
+    }
+
+    /**
+     * Register a channel for message routing (internal use)
+     */
+    internal fun registerChannel(channel: InsforgeChannelImpl) {
+        channels[channel.topic] = channel
+    }
+
+    /**
+     * Unregister a channel (internal use)
+     */
+    internal fun unregisterChannel(channel: InsforgeChannelImpl) {
+        channels.remove(channel.topic)
+    }
+
+    /**
+     * Route incoming WebSocket message to appropriate channel
+     */
+    private fun routeMessageToChannel(topic: String, event: String, payload: JsonObject) {
+        channels[topic]?.onMessage(event, payload)
+    }
+
     // ============ Helper Methods ============
 
     @PublishedApi
@@ -371,6 +553,10 @@ class Realtime internal constructor(
     }
 
     override fun close() {
+        // Close all high-level channels
+        channels.values.forEach { it.close() }
+        channels.clear()
+
         scope.cancel()
         runBlocking {
             disconnect()

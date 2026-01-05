@@ -33,6 +33,8 @@ import kotlinx.serialization.json.Json
  * // Access auth module
  * client.auth.signUp(email, password)
  * client.auth.signIn(email, password)
+ * client.auth.signOut()
+ * client.auth.signInWithDefaultPage(redirectTo)
  * ```
  */
 class Auth internal constructor(
