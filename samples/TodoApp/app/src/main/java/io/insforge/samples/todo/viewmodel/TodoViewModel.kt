@@ -2,17 +2,18 @@ package io.insforge.samples.todo.viewmodel
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import io.insforge.auth.auth
 import io.insforge.database.database
 import io.insforge.exceptions.InsforgeHttpException
 import io.insforge.samples.todo.data.CreateTodoRequest
 import io.insforge.samples.todo.data.InsforgeManager
 import io.insforge.samples.todo.data.Todo
 import io.insforge.samples.todo.data.TodoListState
-import io.insforge.samples.todo.data.UpdateTodoRequest
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.serialization.json.*
 
 /**
  * ViewModel for todo list operations
@@ -62,14 +63,20 @@ class TodoViewModel : ViewModel() {
         viewModelScope.launch {
             _state.value = _state.value.copy(isLoading = true, error = null)
             try {
+                // Get current user ID from auth
+                val currentUser = InsforgeManager.client.auth.currentUser.value
+                    ?: throw IllegalStateException("User must be authenticated to create todos")
+
                 val request = CreateTodoRequest(
                     title = title,
-                    description = description
+                    description = description,
+                    userId = currentUser.id
                 )
+                val jsonArray = Json.encodeToJsonElement(listOf(request)) as JsonArray
                 database
                     .from("todos")
-                    .insert(request)
-                    .executeSingle<Todo>()
+                    .insert(jsonArray)
+                    .execute<Todo>()
 
                 // Reload todos after creating
                 loadTodos()
@@ -93,11 +100,13 @@ class TodoViewModel : ViewModel() {
     fun toggleTodoCompleted(todo: Todo) {
         viewModelScope.launch {
             try {
-                val update = UpdateTodoRequest(completed = !todo.completed)
+                val updateData = buildJsonObject {
+                    put("completed", !todo.completed)
+                }
                 database
                     .from("todos")
-                    .update(update)
                     .eq("id", todo.id!!)
+                    .update(updateData)
                     .execute<Todo>()
 
                 // Update local state optimistically
@@ -126,14 +135,14 @@ class TodoViewModel : ViewModel() {
     fun updateTodo(todoId: String, title: String, description: String?) {
         viewModelScope.launch {
             try {
-                val update = UpdateTodoRequest(
-                    title = title,
-                    description = description
-                )
+                val updateData = buildJsonObject {
+                    put("title", title)
+                    description?.let { put("description", it) }
+                }
                 database
                     .from("todos")
-                    .update(update)
                     .eq("id", todoId)
+                    .update(updateData)
                     .execute<Todo>()
 
                 // Reload todos after updating
@@ -158,8 +167,8 @@ class TodoViewModel : ViewModel() {
             try {
                 database
                     .from("todos")
-                    .delete()
                     .eq("id", todoId)
+                    .delete()
                     .execute<Todo>()
 
                 // Update local state

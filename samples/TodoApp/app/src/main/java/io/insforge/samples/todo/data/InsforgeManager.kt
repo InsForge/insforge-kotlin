@@ -17,6 +17,7 @@ import io.insforge.createInsforgeClient
 import io.insforge.database.Database
 import io.insforge.database.database
 import io.insforge.samples.todo.BuildConfig
+import io.ktor.client.plugins.logging.LogLevel
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 
@@ -58,6 +59,10 @@ object InsforgeManager {
             baseURL = BuildConfig.INSFORGE_URL,
             anonKey = BuildConfig.INSFORGE_ANON_KEY
         ) {
+            // Enable HTTP logging for debugging (shows request/response with headers and body)
+            // Set to LogLevel.NONE in production
+            defaultLogLevel = LogLevel.ALL
+
             // Install Auth module with Android configuration
             install(Auth) {
                 // Browser launcher for OAuth

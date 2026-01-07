@@ -27,7 +27,9 @@ data class Todo(
 data class CreateTodoRequest(
     val title: String,
     val description: String? = null,
-    val completed: Boolean = false
+    val completed: Boolean = false,
+    @SerialName("user_id")
+    val userId: String
 )
 
 /**

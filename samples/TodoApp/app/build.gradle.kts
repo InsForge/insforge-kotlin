@@ -22,7 +22,7 @@ android {
 
         // InsForge Configuration - Replace with your own values
         buildConfigField("String", "INSFORGE_URL", "\"https://pg6afqz9.us-east.insforge.app\"")
-        buildConfigField("String", "INSFORGE_ANON_KEY", "\"your_anon_key\"")
+        buildConfigField("String", "INSFORGE_ANON_KEY", "\"yourownkeyhere\"")
     }
 
     buildTypes {
@@ -88,7 +88,7 @@ dependencies {
     implementation("androidx.compose.ui:ui")
     implementation("androidx.compose.ui:ui-graphics")
     implementation("androidx.compose.ui:ui-tooling-preview")
-    implementation("androidx.compose.material3:material3")
+    implementation("androidx.compose.material3:material3:1.2.0")
     implementation("androidx.compose.material:material-icons-extended")
 
     // Navigation

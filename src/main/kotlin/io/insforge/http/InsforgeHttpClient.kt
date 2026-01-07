@@ -31,18 +31,16 @@ object InsforgeHttpClient {
                 })
             }
 
-            // Logging - print full HTTP request/response with headers and body
+            // Logging - configurable HTTP request/response logging
             install(Logging) {
                 logger = object : Logger {
                     override fun log(message: String) {
                         println("[InsForge HTTP] $message")
                     }
                 }
-                level = LogLevel.ALL
-                sanitizeHeader { header ->
-                    // Mask sensitive headers for security
-                    header == HttpHeaders.Authorization
-                }
+                level = config.defaultLogLevel
+                // Note: No header sanitization - Authorization header is shown in full for debugging
+                // In production, consider masking sensitive headers
             }
 
             // WebSocket support

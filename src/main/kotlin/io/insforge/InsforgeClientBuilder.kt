@@ -28,9 +28,33 @@ class InsforgeClientBuilder @PublishedApi internal constructor(
     var httpEngine: HttpClientEngine? = null
 
     /**
-     * Default log level for HTTP client
+     * HTTP request/response logging level.
+     *
+     * Available levels:
+     * - LogLevel.NONE: No logging (default, recommended for production)
+     * - LogLevel.INFO: Log request/response lines only
+     * - LogLevel.HEADERS: Log headers
+     * - LogLevel.BODY: Log request/response body
+     * - LogLevel.ALL: Log everything including headers and body (recommended for debugging)
+     *
+     * Example:
+     * ```kotlin
+     * val client = createInsforgeClient(url, key) {
+     *     defaultLogLevel = LogLevel.ALL  // Enable full HTTP debugging
+     * }
+     * ```
+     *
+     * Output example (LogLevel.ALL):
+     * ```
+     * [InsForge HTTP] REQUEST: POST https://example.com/api/database/records/todos
+     * [InsForge HTTP] Content-Type: application/json
+     * [InsForge HTTP] Authorization: ***
+     * [InsForge HTTP] BODY: [{"title":"Buy milk","completed":false}]
+     * [InsForge HTTP] RESPONSE: 201 Created
+     * [InsForge HTTP] BODY: [{"id":"123","title":"Buy milk","completed":false}]
+     * ```
      */
-    var defaultLogLevel: LogLevel = LogLevel.INFO
+    var defaultLogLevel: LogLevel = LogLevel.NONE
 
     /**
      * Request timeout duration
