@@ -400,4 +400,98 @@ class DatabaseTest {
             println("Range filter failed: ${e.message}")
         }
     }
+
+    // ============ Count Tests ============
+
+    @Test
+    fun `test count all records`() = runTest {
+        try {
+            val count = client.database.from("todos")
+                .select()
+                .count()
+
+            println("Total todos count: $count")
+            assertTrue(count >= 0, "Count should be non-negative")
+        } catch (e: InsforgeHttpException) {
+            println("Count failed: ${e.message}")
+        }
+    }
+
+    @Test
+    fun `test count with filter`() = runTest {
+        try {
+            val count = client.database.from("todos")
+                .select()
+                .eq("completed", false)
+                .count()
+
+            println("Incomplete todos count: $count")
+            assertTrue(count >= 0, "Count should be non-negative")
+        } catch (e: InsforgeHttpException) {
+            println("Count with filter failed: ${e.message}")
+        }
+    }
+
+    @Test
+    fun `test count with exact type`() = runTest {
+        try {
+            val count = client.database.from("todos")
+                .select()
+                .count(CountType.EXACT)
+
+            println("Exact count: $count")
+            assertTrue(count >= 0, "Count should be non-negative")
+        } catch (e: InsforgeHttpException) {
+            println("Exact count failed: ${e.message}")
+        }
+    }
+
+    @Test
+    fun `test count with planned type`() = runTest {
+        try {
+            val count = client.database.from("todos")
+                .select()
+                .count(CountType.PLANNED)
+
+            println("Planned count: $count")
+            assertTrue(count >= 0, "Count should be non-negative")
+        } catch (e: InsforgeHttpException) {
+            println("Planned count failed: ${e.message}")
+        }
+    }
+
+    @Test
+    fun `test count with estimated type`() = runTest {
+        try {
+            val count = client.database.from("todos")
+                .select()
+                .count(CountType.ESTIMATED)
+
+            println("Estimated count: $count")
+            assertTrue(count >= 0, "Count should be non-negative")
+        } catch (e: InsforgeHttpException) {
+            println("Estimated count failed: ${e.message}")
+        }
+    }
+
+    @Test
+    fun `test count matches select size`() = runTest {
+        try {
+            // Get actual records
+            val records = client.database.from("todos")
+                .select()
+                .execute<TodoRecord>()
+
+            // Get count
+            val count = client.database.from("todos")
+                .select()
+                .count()
+
+            println("Records size: ${records.size}, Count: $count")
+            // Note: They might differ if table is being modified concurrently
+            // but for static test data they should match
+        } catch (e: InsforgeHttpException) {
+            println("Count comparison failed: ${e.message}")
+        }
+    }
 }

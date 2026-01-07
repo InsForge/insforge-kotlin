@@ -72,10 +72,9 @@ class TodoViewModel : ViewModel() {
                     description = description,
                     userId = currentUser.id
                 )
-                val jsonArray = Json.encodeToJsonElement(listOf(request)) as JsonArray
                 database
                     .from("todos")
-                    .insert(jsonArray)
+                    .insertTyped(listOf(request))
                     .execute<Todo>()
 
                 // Reload todos after creating

@@ -3,8 +3,34 @@ package io.insforge.database
 import io.insforge.InsforgeClient
 import io.ktor.client.call.*
 import io.ktor.client.request.*
+import io.ktor.client.statement.*
 import io.ktor.http.*
 import kotlinx.serialization.json.*
+
+/**
+ * Count algorithm types for database queries.
+ *
+ * Similar to PostgREST/Supabase count options.
+ */
+enum class CountType {
+    /**
+     * Exact count - performs a full table scan.
+     * Most accurate but slowest for large tables.
+     */
+    EXACT,
+
+    /**
+     * Planned count - uses PostgreSQL's query planner estimate.
+     * Fast but may be inaccurate, especially after bulk operations.
+     */
+    PLANNED,
+
+    /**
+     * Estimated count - uses statistics from pg_class.
+     * Fastest but least accurate.
+     */
+    ESTIMATED
+}
 
 /**
  * Query builder for database tables
@@ -205,6 +231,95 @@ class TableQuery @PublishedApi internal constructor(
      */
     fun delete(): DeleteQuery {
         return DeleteQuery(client, baseUrl, tableName, filters)
+    }
+
+    /**
+     * Count records matching filters.
+     *
+     * Example usage:
+     * ```kotlin
+     * // Count all records
+     * val count = client.database.from("users").select().count()
+     *
+     * // Count with filter
+     * val activeCount = client.database.from("users")
+     *     .select()
+     *     .eq("active", true)
+     *     .count()
+     *
+     * // Count with specific algorithm
+     * val estimatedCount = client.database.from("users")
+     *     .select()
+     *     .count(CountType.ESTIMATED)
+     * ```
+     *
+     * @param countType The count algorithm to use (default: EXACT)
+     * @return The count of matching records
+     */
+    suspend fun count(countType: CountType = CountType.EXACT): Long {
+        val response = client.httpClient.get("$baseUrl/records/$tableName") {
+            // Select nothing (just count)
+            parameter("select", "count")
+            // Request count in header
+            header("Prefer", "count=${countType.name.lowercase()}")
+            // Apply filters
+            filters.forEach { (column, filter) ->
+                parameter(column, filter)
+            }
+            // Limit to 0 rows since we only want the count
+            parameter("limit", 0)
+        }
+
+        val database = client.plugin<Database>(Database.key)
+
+        // Try to get count from Content-Range header first (PostgREST style)
+        val contentRange = response.headers["Content-Range"]
+        if (contentRange != null) {
+            // Format: "0-0/123" or "*/123" where 123 is the total count
+            val totalCount = contentRange.substringAfterLast("/").toLongOrNull()
+            if (totalCount != null) {
+                return totalCount
+            }
+        }
+
+        // Try to get count from X-Total-Count header
+        val totalCountHeader = response.headers["X-Total-Count"]
+        if (totalCountHeader != null) {
+            return totalCountHeader.toLongOrNull() ?: 0L
+        }
+
+        // Fallback: parse response body if it contains count
+        val bodyText = response.bodyAsText()
+        if (bodyText.isNotBlank()) {
+            try {
+                val json = Json.parseToJsonElement(bodyText)
+                // Handle array response with count field
+                if (json is JsonArray && json.isNotEmpty()) {
+                    val firstElement = json[0]
+                    if (firstElement is JsonObject) {
+                        firstElement["count"]?.let { countElement ->
+                            return when (countElement) {
+                                is JsonPrimitive -> countElement.longOrNull ?: 0L
+                                else -> 0L
+                            }
+                        }
+                    }
+                }
+                // Handle object response with count field
+                if (json is JsonObject) {
+                    json["count"]?.let { countElement ->
+                        return when (countElement) {
+                            is JsonPrimitive -> countElement.longOrNull ?: 0L
+                            else -> 0L
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                // Ignore parse errors
+            }
+        }
+
+        return 0L
     }
 }
 
