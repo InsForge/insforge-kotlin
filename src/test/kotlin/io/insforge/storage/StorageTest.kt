@@ -5,6 +5,7 @@ import io.insforge.exceptions.InsforgeHttpException
 import io.insforge.storage.models.UploadMethod
 import kotlinx.coroutines.test.runTest
 import kotlin.test.*
+import kotlin.time.Duration.Companion.seconds
 
 /**
  * Integration tests for Storage module
@@ -545,7 +546,7 @@ class StorageTest {
     // ============ Local File Upload Tests ============
 
     @Test
-    fun `test upload local png file`() = runTest {
+    fun `test upload local png file`() = runTest(timeout = 60.seconds) {
         // Create a dedicated bucket for this test
         val uploadBucketName = "cpu-upload-test-${System.currentTimeMillis()}"
 
@@ -602,7 +603,7 @@ class StorageTest {
     }
 
     @Test
-    fun `test upload local file using File API`() = runTest {
+    fun `test upload local file using File API`() = runTest(timeout = 60.seconds) {
         // Create a dedicated bucket for this test
         val uploadBucketName = "file-api-test-${System.currentTimeMillis()}"
 
