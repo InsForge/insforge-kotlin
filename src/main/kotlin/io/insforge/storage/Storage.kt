@@ -181,7 +181,7 @@ class Storage internal constructor(
      * @param bucketId The name/ID of the bucket to delete
      */
     suspend fun deleteBucket(bucketId: String) {
-        val response = client.httpClient.delete("$baseUrl/buckets/$bucketId/objects")
+        val response = client.httpClient.delete("$baseUrl/buckets/$bucketId")
         handleResponse<DeleteBucketResponse>(response)
         bucketCache.remove(bucketId)
     }

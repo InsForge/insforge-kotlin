@@ -5,10 +5,14 @@ import io.insforge.exceptions.InsforgeHttpException
 import io.insforge.storage.models.*
 import io.ktor.client.*
 import io.ktor.client.call.*
+import io.ktor.client.engine.cio.*
+import io.ktor.client.plugins.*
+import io.ktor.client.plugins.contentnegotiation.*
 import io.ktor.client.request.*
 import io.ktor.client.request.forms.*
 import io.ktor.client.statement.*
 import io.ktor.http.*
+import io.ktor.serialization.kotlinx.json.*
 import io.ktor.utils.io.*
 import kotlinx.serialization.json.Json
 
@@ -261,6 +265,28 @@ internal class BucketApiImpl(
 
     private val json = Json { ignoreUnknownKeys = true }
 
+    /**
+     * A separate HTTP client for S3 uploads that does NOT include the Authorization header.
+     * S3 presigned URLs include their own authentication via query parameters,
+     * and sending a Bearer token causes "Unsupported Authorization Type" errors.
+     */
+    private val s3HttpClient: HttpClient by lazy {
+        HttpClient(CIO) {
+            install(ContentNegotiation) {
+                json(Json {
+                    prettyPrint = true
+                    isLenient = true
+                    ignoreUnknownKeys = true
+                })
+            }
+            install(HttpTimeout) {
+                requestTimeoutMillis = 300000 // 5 minutes for large uploads
+                connectTimeoutMillis = 30000
+            }
+            expectSuccess = false
+        }
+    }
+
     // ============ Upload Operations ============
 
     override suspend fun upload(
@@ -442,18 +468,20 @@ internal class BucketApiImpl(
         options: UploadOptions
     ): FileUploadResponse {
         // Upload to S3 using presigned POST
+        // IMPORTANT: Use s3HttpClient which does NOT send Authorization header.
+        // S3 presigned URLs include their own authentication via query parameters.
         val fields = strategy.fields ?: emptyMap()
 
-        val s3Response = httpClient.post(strategy.uploadUrl) {
+        val s3Response = s3HttpClient.post(strategy.uploadUrl) {
             setBody(MultiPartFormDataContent(
                 formData {
-                    // Add all presigned form fields
+                    // Add all presigned form fields (must come before the file)
                     fields.forEach { (key, value) ->
                         append(key, value)
                     }
-                    // Add Content-Type field
-                    append("Content-Type", contentType)
-                    // Add the file last (required for S3)
+                    // Add the file last (required by S3 presigned POST)
+                    // Note: Do NOT add Content-Type as a separate form field unless
+                    // the server includes it in the presigned policy conditions.
                     append("file", data, Headers.build {
                         append(HttpHeaders.ContentType, contentType)
                         append(HttpHeaders.ContentDisposition, "filename=\"${strategy.key}\"")
@@ -464,10 +492,11 @@ internal class BucketApiImpl(
 
         // Check S3 upload success (204 No Content or 200 OK)
         if (s3Response.status != HttpStatusCode.NoContent && s3Response.status != HttpStatusCode.OK) {
+            val errorBody = s3Response.bodyAsText()
             throw InsforgeHttpException(
                 statusCode = s3Response.status.value,
                 error = "S3_UPLOAD_FAILED",
-                message = "Failed to upload file to S3: ${s3Response.status}"
+                message = "Failed to upload file to S3: ${s3Response.status}. $errorBody"
             )
         }
 
@@ -519,7 +548,8 @@ internal class BucketApiImpl(
             }
             DownloadMethod.PRESIGNED -> {
                 // Download from presigned S3 URL
-                val response = httpClient.get(strategy.url) {
+                // Use s3HttpClient to avoid sending Authorization header to S3
+                val response = s3HttpClient.get(strategy.url) {
                     strategy.headers?.forEach { (key, value) ->
                         header(key, value)
                     }

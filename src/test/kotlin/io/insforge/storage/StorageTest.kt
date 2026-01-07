@@ -541,4 +541,116 @@ class StorageTest {
             println("Content type auto detection failed: ${e.message}")
         }
     }
+
+    // ============ Local File Upload Tests ============
+
+    @Test
+    fun `test upload local png file`() = runTest {
+        // Create a dedicated bucket for this test
+        val uploadBucketName = "cpu-upload-test-${System.currentTimeMillis()}"
+
+        try {
+            // Create bucket first
+            client.storage.createBucket(uploadBucketName) {
+                isPublic = true
+            }
+            println("Created bucket: $uploadBucketName")
+
+            val bucket = client.storage[uploadBucketName]
+
+            // Read the local cpu.png file from project root
+            val localFile = java.io.File("cpu.png")
+            if (!localFile.exists()) {
+                println("Skipping test: cpu.png not found at ${localFile.absolutePath}")
+                client.storage.deleteBucket(uploadBucketName)
+                return@runTest
+            }
+
+            val fileBytes = localFile.readBytes()
+            val key = "uploaded-cpu-${System.currentTimeMillis()}.png"
+
+            println("Uploading ${localFile.name} (${fileBytes.size} bytes)...")
+
+            val result = bucket.upload(key, fileBytes) {
+                contentType = "image/png"
+            }
+
+            println("Upload successful!")
+            println("  Key: ${result.key}")
+            println("  Size: ${result.size} bytes")
+            println("  MIME Type: ${result.mimeType}")
+
+            assertEquals(key, result.key)
+            assertEquals(fileBytes.size.toLong(), result.size)
+            assertEquals("image/png", result.mimeType)
+
+            // Get download URL
+            val downloadUrl = bucket.createSignedUrl(key, expiresIn = 3600)
+            println("  Download URL: $downloadUrl")
+
+            // Cleanup - delete file and bucket
+            bucket.delete(key)
+            client.storage.deleteBucket(uploadBucketName)
+            println("  Cleaned up bucket: $uploadBucketName")
+
+        } catch (e: InsforgeHttpException) {
+            println("Upload local file failed: ${e.message}")
+            // Try to cleanup bucket on failure
+            try { client.storage.deleteBucket(uploadBucketName) } catch (_: Exception) {}
+            throw e
+        }
+    }
+
+    @Test
+    fun `test upload local file using File API`() = runTest {
+        // Create a dedicated bucket for this test
+        val uploadBucketName = "file-api-test-${System.currentTimeMillis()}"
+
+        try {
+            // Create bucket first
+            client.storage.createBucket(uploadBucketName) {
+                isPublic = true
+            }
+            println("Created bucket: $uploadBucketName")
+
+            val bucket = client.storage[uploadBucketName]
+
+            // Read the local cpu.png file from project root
+            val localFile = java.io.File("cpu.png")
+            if (!localFile.exists()) {
+                println("Skipping test: cpu.png not found at ${localFile.absolutePath}")
+                client.storage.deleteBucket(uploadBucketName)
+                return@runTest
+            }
+
+            val key = "file-api-cpu-${System.currentTimeMillis()}.png"
+
+            println("Uploading ${localFile.name} using File API...")
+
+            // Use the File upload method
+            val result = bucket.upload(key, localFile) {
+                contentType = "image/png"
+            }
+
+            println("Upload successful!")
+            println("  Key: ${result.key}")
+            println("  Size: ${result.size} bytes")
+            println("  MIME Type: ${result.mimeType}")
+
+            // Get download URL
+            val downloadUrl = bucket.createSignedUrl(key, expiresIn = 3600)
+            println("  Download URL: $downloadUrl")
+
+            // Cleanup
+            bucket.delete(key)
+            client.storage.deleteBucket(uploadBucketName)
+            println("  Cleaned up bucket: $uploadBucketName")
+
+        } catch (e: InsforgeHttpException) {
+            println("Upload local file using File API failed: ${e.message}")
+            // Try to cleanup bucket on failure
+            try { client.storage.deleteBucket(uploadBucketName) } catch (_: Exception) {}
+            throw e
+        }
+    }
 }

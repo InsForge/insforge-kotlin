@@ -66,6 +66,8 @@ object TestConfig {
             baseURL = BASE_URL,
             anonKey = ANON_KEY
         ) {
+            // Enable full HTTP logging for debugging
+            defaultLogLevel = LogLevel.ALL
             install(Storage)
         }
     }
