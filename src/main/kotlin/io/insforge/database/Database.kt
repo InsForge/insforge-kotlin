@@ -115,11 +115,24 @@ class Database internal constructor(
     @PublishedApi
     internal suspend inline fun <reified T> handleResponse(response: HttpResponse): T {
         return when (response.status) {
-            HttpStatusCode.OK, HttpStatusCode.Created, HttpStatusCode.NoContent -> {
+            HttpStatusCode.OK, HttpStatusCode.Created -> {
+                // Check if body is empty (content length is 0 or null)
+                val contentLength = response.headers[HttpHeaders.ContentLength]?.toLongOrNull()
+                if (contentLength == 0L || (contentLength == null && T::class == List::class.java)) {
+                    @Suppress("UNCHECKED_CAST")
+                    emptyList<Any>() as T
+                } else {
+                    response.body()
+                }
+            }
+            HttpStatusCode.NoContent -> {
+                // 204 No Content - return appropriate empty value based on type
+                @Suppress("UNCHECKED_CAST")
                 if (T::class == Unit::class) {
                     Unit as T
                 } else {
-                    response.body()
+                    // For List types (which is what all database queries return), return empty list
+                    emptyList<Any>() as T
                 }
             }
             else -> {

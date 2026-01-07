@@ -41,7 +41,7 @@ class DatabaseTest {
     data class TodoRecord(
         val id: String? = null,
         val title: String? = null,
-        val completed: Boolean? = null,
+        val is_completed: Boolean? = null,
         val created_at: String? = null
     )
 
@@ -422,7 +422,7 @@ class DatabaseTest {
         try {
             val count = client.database.from("todos")
                 .select()
-                .eq("completed", false)
+                .eq("is_completed", false)
                 .count()
 
             println("Incomplete todos count: $count")
@@ -492,6 +492,190 @@ class DatabaseTest {
             // but for static test data they should match
         } catch (e: InsforgeHttpException) {
             println("Count comparison failed: ${e.message}")
+        }
+    }
+
+    // ============ Upsert Tests ============
+
+    @Test
+    fun `test upsert new record`() = runTest {
+        val timestamp = System.currentTimeMillis()
+        try {
+            val records = buildJsonArray {
+                addJsonObject {
+                    put("title", "Upsert Test $timestamp")
+                    put("is_completed", false)
+                }
+            }
+
+            val result = client.database.from("todos")
+                .upsert(records)
+                .returning()
+                .execute<TodoRecord>()
+
+            println("Upserted ${result.size} records")
+            assertTrue(result.isNotEmpty(), "Should return upserted records")
+
+            // Cleanup
+            result.firstOrNull()?.id?.let { id ->
+                client.database.from("todos")
+                    .eq("id", id)
+                    .delete()
+                    .execute<TodoRecord>()
+            }
+        } catch (e: InsforgeHttpException) {
+            println("Upsert new record failed: ${e.message}")
+        }
+    }
+
+    @Test
+    fun `test upsert with onConflict`() = runTest {
+        val timestamp = System.currentTimeMillis()
+        try {
+            // First insert a record
+            val initialRecords = buildJsonArray {
+                addJsonObject {
+                    put("title", "Conflict Test $timestamp")
+                    put("is_completed", false)
+                }
+            }
+
+            val inserted = client.database.from("todos")
+                .insert(initialRecords)
+                .returning()
+                .execute<TodoRecord>()
+
+            val insertedId = inserted.firstOrNull()?.id
+            println("Inserted record with id: $insertedId")
+
+            if (insertedId != null) {
+                // Now upsert with the same id - should update
+                val upsertRecords = buildJsonArray {
+                    addJsonObject {
+                        put("id", insertedId)
+                        put("title", "Updated via Upsert $timestamp")
+                        put("is_completed", true)
+                    }
+                }
+
+                val upserted = client.database.from("todos")
+                    .upsert(upsertRecords) {
+                        onConflict = "id"
+                    }
+                    .returning()
+                    .execute<TodoRecord>()
+
+                println("Upserted ${upserted.size} records")
+                upserted.firstOrNull()?.let {
+                    println("Updated title: ${it.title}, is_completed: ${it.is_completed}")
+                }
+
+                // Cleanup
+                client.database.from("todos")
+                    .eq("id", insertedId)
+                    .delete()
+                    .execute<TodoRecord>()
+            }
+        } catch (e: InsforgeHttpException) {
+            println("Upsert with onConflict failed: ${e.message}")
+        }
+    }
+
+    @Test
+    fun `test upsert with ignoreDuplicates`() = runTest {
+        val timestamp = System.currentTimeMillis()
+        try {
+            // First insert a record
+            val initialRecords = buildJsonArray {
+                addJsonObject {
+                    put("title", "Ignore Duplicates Test $timestamp")
+                    put("is_completed", false)
+                }
+            }
+
+            val inserted = client.database.from("todos")
+                .insert(initialRecords)
+                .returning()
+                .execute<TodoRecord>()
+
+            val insertedId = inserted.firstOrNull()?.id
+            println("Inserted record with id: $insertedId")
+
+            if (insertedId != null) {
+                // Now upsert with ignoreDuplicates - should NOT update
+                val upsertRecords = buildJsonArray {
+                    addJsonObject {
+                        put("id", insertedId)
+                        put("title", "This should be ignored $timestamp")
+                        put("is_completed", true)
+                    }
+                }
+
+                client.database.from("todos")
+                    .upsert(upsertRecords) {
+                        onConflict = "id"
+                        ignoreDuplicates = true
+                    }
+                    .execute<TodoRecord>()
+
+                // Verify the record was NOT updated
+                val fetched = client.database.from("todos")
+                    .select()
+                    .eq("id", insertedId)
+                    .execute<TodoRecord>()
+
+                fetched.firstOrNull()?.let {
+                    println("After ignoreDuplicates upsert - title: ${it.title}, is_completed: ${it.is_completed}")
+                    // Title should still be the original
+                    assertTrue(it.title?.contains("Ignore Duplicates Test") == true,
+                        "Title should not have been updated")
+                }
+
+                // Cleanup
+                client.database.from("todos")
+                    .eq("id", insertedId)
+                    .delete()
+                    .execute<TodoRecord>()
+            }
+        } catch (e: InsforgeHttpException) {
+            println("Upsert with ignoreDuplicates failed: ${e.message}")
+        }
+    }
+
+    @Test
+    fun `test upsertTyped with data class`() = runTest {
+        val timestamp = System.currentTimeMillis()
+        try {
+            @Serializable
+            data class TodoInput(
+                val title: String,
+                val is_completed: Boolean = false
+            )
+
+            val records = listOf(
+                TodoInput(title = "Typed Upsert 1 $timestamp"),
+                TodoInput(title = "Typed Upsert 2 $timestamp")
+            )
+
+            val result = client.database.from("todos")
+                .upsertTyped(records)
+                .returning()
+                .execute<TodoRecord>()
+
+            println("Upserted ${result.size} typed records")
+            result.forEach { println("  - ${it.title}") }
+
+            // Cleanup
+            result.forEach { record ->
+                record.id?.let { id ->
+                    client.database.from("todos")
+                        .eq("id", id)
+                        .delete()
+                        .execute<TodoRecord>()
+                }
+            }
+        } catch (e: InsforgeHttpException) {
+            println("Upsert typed failed: ${e.message}")
         }
     }
 }

@@ -213,6 +213,68 @@ class TableQuery @PublishedApi internal constructor(
     }
 
     /**
+     * Upsert records - insert or update on conflict.
+     *
+     * Performs an UPSERT operation: inserts the row if it doesn't exist,
+     * or updates it if a row with the same conflict column(s) already exists.
+     *
+     * Example usage:
+     * ```kotlin
+     * // Upsert with default conflict column (usually primary key)
+     * client.database.from("users")
+     *     .upsert(userRecords)
+     *     .execute<User>()
+     *
+     * // Upsert with specific conflict column
+     * client.database.from("users")
+     *     .upsert(userRecords) {
+     *         onConflict = "email"
+     *     }
+     *     .returning()
+     *     .execute<User>()
+     *
+     * // Upsert ignoring duplicates (no update, just skip)
+     * client.database.from("users")
+     *     .upsert(userRecords) {
+     *         onConflict = "email"
+     *         ignoreDuplicates = true
+     *     }
+     *     .execute<User>()
+     * ```
+     *
+     * @param records The records to upsert as JsonArray
+     * @param options Configuration for the upsert operation
+     * @return UpsertQuery for further configuration
+     */
+    fun upsert(records: JsonArray, options: UpsertOptions.() -> Unit = {}): UpsertQuery {
+        val upsertOptions = UpsertOptions().apply(options)
+        return UpsertQuery(client, baseUrl, tableName, records, upsertOptions)
+    }
+
+    /**
+     * Upsert records from a list - converts to JsonArray.
+     *
+     * @param records The records to upsert
+     * @param options Configuration for the upsert operation
+     * @return UpsertQuery for further configuration
+     */
+    inline fun <reified T> upsertTyped(records: List<T>, noinline options: UpsertOptions.() -> Unit = {}): UpsertQuery {
+        val jsonArray = Json.encodeToJsonElement(records) as JsonArray
+        return upsert(jsonArray, options)
+    }
+
+    /**
+     * Upsert a single record.
+     *
+     * @param record The record to upsert
+     * @param options Configuration for the upsert operation
+     * @return UpsertQuery for further configuration
+     */
+    inline fun <reified T> upsertTyped(record: T, noinline options: UpsertOptions.() -> Unit = {}): UpsertQuery {
+        return upsertTyped(listOf(record), options)
+    }
+
+    /**
      * Update records matching filters - accepts JsonObject for proper serialization
      */
     fun update(data: JsonObject): UpdateQuery {
@@ -429,6 +491,99 @@ class DeleteQuery @PublishedApi internal constructor(
             filters.forEach { (column, filter) ->
                 parameter(column, filter)
             }
+        }
+
+        val database = client.plugin<Database>(Database.key)
+        return database.handleResponse(response)
+    }
+}
+
+/**
+ * Options for upsert operations.
+ */
+class UpsertOptions {
+    /**
+     * The column(s) to use for conflict detection.
+     * If not specified, the primary key is used.
+     *
+     * For composite keys, use comma-separated column names: "col1,col2"
+     */
+    var onConflict: String? = null
+
+    /**
+     * If true, duplicate rows are ignored (no update performed).
+     * If false (default), duplicate rows are updated with the new values.
+     */
+    var ignoreDuplicates: Boolean = false
+
+    /**
+     * If true, missing columns in the input will be set to their default values.
+     * If false (default), missing columns will be set to NULL.
+     */
+    var defaultToNull: Boolean = true
+}
+
+/**
+ * Upsert query builder
+ */
+class UpsertQuery @PublishedApi internal constructor(
+    @PublishedApi internal val client: InsforgeClient,
+    @PublishedApi internal val baseUrl: String,
+    @PublishedApi internal val tableName: String,
+    @PublishedApi internal val records: JsonArray,
+    @PublishedApi internal val options: UpsertOptions
+) {
+    @PublishedApi internal var returnRepresentation = false
+
+    /**
+     * Return upserted records in response
+     */
+    fun returning(): UpsertQuery {
+        returnRepresentation = true
+        return this
+    }
+
+    /**
+     * Execute upsert
+     */
+    suspend inline fun <reified T> execute(): List<T> {
+        // Extract column names from the records for the columns parameter
+        val columns = records
+            .filterIsInstance<JsonObject>()
+            .flatMap { it.keys }
+            .distinct()
+
+        val response = client.httpClient.post("$baseUrl/records/$tableName") {
+            contentType(ContentType.Application.Json)
+
+            // Build Prefer header for upsert
+            val preferValues = mutableListOf<String>()
+
+            // resolution=merge-duplicates (update) or resolution=ignore-duplicates
+            if (options.ignoreDuplicates) {
+                preferValues.add("resolution=ignore-duplicates")
+            } else {
+                preferValues.add("resolution=merge-duplicates")
+            }
+
+            // Return representation if requested
+            if (returnRepresentation) {
+                preferValues.add("return=representation")
+            }
+
+            header("Prefer", preferValues.joinToString(","))
+
+            // Add columns parameter
+            if (columns.isNotEmpty()) {
+                parameter("columns", columns.joinToString(","))
+            }
+
+            // Add on_conflict parameter if specified
+            options.onConflict?.let {
+                parameter("on_conflict", it)
+            }
+
+            setBody(records)
         }
 
         val database = client.plugin<Database>(Database.key)
