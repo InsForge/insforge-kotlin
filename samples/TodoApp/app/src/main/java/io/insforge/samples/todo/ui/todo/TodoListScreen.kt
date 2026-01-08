@@ -26,12 +26,23 @@ fun TodoListScreen(
     onCreateTodo: (title: String, description: String?) -> Unit,
     onToggleTodo: (Todo) -> Unit,
     onDeleteTodo: (String) -> Unit,
-    onSignOut: () -> Unit
+    onSignOut: () -> Unit,
+    onStartRealtimeSync: () -> Unit = {},
+    onStopRealtimeSync: () -> Unit = {}
 ) {
     var showCreateDialog by remember { mutableStateOf(false) }
 
+    // Load initial todos
     LaunchedEffect(Unit) {
         onRefresh()
+    }
+
+    // Start realtime sync when screen is displayed, stop when disposed
+    DisposableEffect(Unit) {
+        onStartRealtimeSync()
+        onDispose {
+            onStopRealtimeSync()
+        }
     }
 
     Scaffold(
@@ -179,7 +190,7 @@ fun TodoItem(
     onDelete: () -> Unit
 ) {
     val backgroundColor by animateColorAsState(
-        targetValue = if (todo.completed) {
+        targetValue = if (todo.completed == true) {
             MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
         } else {
             MaterialTheme.colorScheme.surface
@@ -198,7 +209,7 @@ fun TodoItem(
             verticalAlignment = Alignment.CenterVertically
         ) {
             Checkbox(
-                checked = todo.completed,
+                checked = todo.completed ?: false,
                 onCheckedChange = { onToggle() }
             )
 
@@ -210,8 +221,8 @@ fun TodoItem(
                 Text(
                     text = todo.title,
                     style = MaterialTheme.typography.titleMedium,
-                    textDecoration = if (todo.completed) TextDecoration.LineThrough else null,
-                    color = if (todo.completed) {
+                    textDecoration = if (todo.completed == true) TextDecoration.LineThrough else null,
+                    color = if (todo.completed == true) {
                         MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
                     } else {
                         MaterialTheme.colorScheme.onSurface

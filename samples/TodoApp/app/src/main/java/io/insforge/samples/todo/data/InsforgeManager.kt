@@ -12,10 +12,9 @@ import io.insforge.InsforgeClient
 import io.insforge.auth.Auth
 import io.insforge.auth.BrowserLauncher
 import io.insforge.auth.SessionStorage
-import io.insforge.auth.auth
 import io.insforge.createInsforgeClient
 import io.insforge.database.Database
-import io.insforge.database.database
+import io.insforge.realtime.Realtime
 import io.insforge.samples.todo.BuildConfig
 import io.ktor.client.plugins.logging.LogLevel
 import kotlinx.coroutines.flow.first
@@ -81,6 +80,9 @@ object InsforgeManager {
 
             // Install Database module for todo operations
             install(Database)
+
+            // Install Realtime module for real-time subscriptions
+            install(Realtime)
         }
     }
 

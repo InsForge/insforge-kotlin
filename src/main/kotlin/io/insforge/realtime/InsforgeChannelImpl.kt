@@ -41,7 +41,7 @@ internal class InsforgeChannelImpl(
             // Build join payload with configurations
             val joinPayload = buildJoinPayload()
 
-            // Send join message through realtime connection
+            // Send join message through realtime connection (non-suspend)
             realtime.sendChannelMessage(
                 topic = topic,
                 event = "phx_join",

@@ -6,28 +6,29 @@ import io.insforge.plugins.InsforgePlugin
 import io.insforge.plugins.InsforgePluginProvider
 import io.insforge.realtime.models.*
 import io.ktor.client.call.*
-import io.ktor.client.plugins.websocket.*
 import io.ktor.client.request.*
 import io.ktor.client.statement.*
 import io.ktor.http.*
-import io.ktor.websocket.*
+import io.socket.client.IO
+import io.socket.client.Socket
 import kotlinx.coroutines.*
-import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
-import kotlinx.serialization.json.contentOrNull
-import kotlinx.serialization.json.jsonObject
-import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
+import org.json.JSONObject
 import java.util.concurrent.ConcurrentHashMap
+import kotlin.coroutines.resume
+import kotlin.coroutines.resumeWithException
 
 /**
- * Realtime module for InsForge (WebSocket pub/sub channels)
+ * Realtime module for InsForge (Socket.IO pub/sub channels)
+ *
+ * InsForge uses Socket.IO for realtime communication. The HTTP REST API at
+ * /api/realtime/ is only for management operations (channels, messages, permissions).
  *
  * Install this module in your Insforge client:
  * ```kotlin
@@ -38,41 +39,27 @@ import java.util.concurrent.ConcurrentHashMap
  * // Connect to realtime
  * client.realtime.connect()
  *
- * // === High-Level API (Recommended) ===
- *
- * // Create a channel with configuration
- * val channel = client.realtime.channel("room-1") {
- *     broadcast {
- *         acknowledgeBroadcasts = true
- *     }
+ * // Subscribe to a channel
+ * val response = client.realtime.subscribe("orders:123")
+ * if (!response.ok) {
+ *     println("Failed to subscribe: ${response.error}")
  * }
  *
- * // Listen for broadcast messages
- * channel.broadcastFlow<Message>("chat")
- *     .onEach { println("Received: $it") }
- *     .launchIn(scope)
- *
- * // Listen for database changes
- * channel.postgresChangeFlow<PostgresAction.Insert>(schema = "public") {
- *     table = "messages"
- * }.onEach { println("New: ${it.record}") }
- *   .launchIn(scope)
- *
- * // Subscribe to channel
- * channel.subscribe(blockUntilSubscribed = true)
- *
- * // Send a broadcast
- * channel.broadcast("chat", buildJsonObject { put("text", "Hello!") })
- *
- * // === Low-Level API ===
- *
- * // Subscribe to channel (legacy)
- * client.realtime.subscribe("chat:room1") { message ->
- *     println("Received: ${message.payload}")
+ * // Listen for specific events
+ * client.realtime.on("order_updated") { message ->
+ *     println("Order updated: ${message.payload}")
  * }
  *
- * // Publish message (legacy)
- * client.realtime.publish("chat:room1", "message.new", mapOf("text" to "Hello"))
+ * // Listen for connection events
+ * client.realtime.on("connect") { println("Connected!") }
+ * client.realtime.on("disconnect") { reason -> println("Disconnected: $reason") }
+ *
+ * // Publish a message to a channel
+ * client.realtime.publish("orders:123", "status_changed", mapOf("status" to "shipped"))
+ *
+ * // Unsubscribe and disconnect when done
+ * client.realtime.unsubscribe("orders:123")
+ * client.realtime.disconnect()
  * ```
  */
 class Realtime internal constructor(
@@ -82,26 +69,39 @@ class Realtime internal constructor(
 
     override val key: String = Realtime.key
 
+    // REST API base URL for management operations
     private val baseUrl = "${client.baseURL}/api/realtime"
-    private val wsUrl = client.baseURL.replace("https://", "wss://").replace("http://", "ws://")
 
-    private var wsSession: DefaultClientWebSocketSession? = null
-    private var connectionJob: Job? = null
-    private val subscriptions = mutableMapOf<String, MutableList<suspend (RealtimeMessage) -> Unit>>()
-    private val messageChannel = Channel<RealtimeMessage>(Channel.UNLIMITED)
+    // Socket.IO client
+    private var socket: Socket? = null
+    private var connectJob: Deferred<Unit>? = null
+    private val subscribedChannels = ConcurrentHashMap.newKeySet<String>()
+    private val eventListeners = ConcurrentHashMap<String, MutableSet<EventCallback<*>>>()
 
     private val _connectionState = MutableStateFlow<ConnectionState>(ConnectionState.Disconnected)
     val connectionState: StateFlow<ConnectionState> = _connectionState.asStateFlow()
 
     private val scope = CoroutineScope(Dispatchers.Default + SupervisorJob())
 
-    // High-level channel management
+    // High-level channel management (for advanced API)
     private val channels = ConcurrentHashMap<String, InsforgeChannelImpl>()
-    private var messageRef = 0
 
     private val json = Json {
         ignoreUnknownKeys = true
         isLenient = true
+    }
+
+    companion object : InsforgePluginProvider<RealtimeConfig, Realtime> {
+        override val key: String = "realtime"
+        private const val CONNECT_TIMEOUT_MS = 10000L
+
+        override fun createConfig(configure: RealtimeConfig.() -> Unit): RealtimeConfig {
+            return RealtimeConfig().apply(configure)
+        }
+
+        override fun create(client: InsforgeClient, config: RealtimeConfig): Realtime {
+            return Realtime(client, config)
+        }
     }
 
     sealed class ConnectionState {
@@ -111,38 +111,413 @@ class Realtime internal constructor(
         data class Error(val message: String) : ConnectionState()
     }
 
+    // Type alias for event callbacks
+    fun interface EventCallback<T> {
+        fun onEvent(payload: T?)
+    }
+
+    // ============ Connection Management ============
+
+    /**
+     * Check if connected to the realtime server
+     */
+    val isConnected: Boolean
+        get() = socket?.connected() == true
+
+    /**
+     * Get the socket ID (if connected)
+     */
+    val socketId: String?
+        get() = socket?.id()
+
+    /**
+     * Connect to the realtime Socket.IO server.
+     *
+     * @return Promise that resolves when connected
+     * @throws Exception if connection fails or times out
+     */
+    suspend fun connect() {
+        // Already connected
+        if (socket?.connected() == true) {
+            return
+        }
+
+        // Connection already in progress, wait for it
+        connectJob?.let {
+            if (it.isActive) {
+                it.await()
+                return
+            }
+        }
+
+        connectJob = scope.async {
+            suspendCancellableCoroutine { continuation ->
+                try {
+                    _connectionState.value = ConnectionState.Connecting
+
+                    // Get auth token
+                    val token = client.getCurrentAccessToken() ?: client.anonKey
+
+                    // Configure Socket.IO options
+                    val options = IO.Options().apply {
+                        // Transport - prefer websocket
+                        transports = arrayOf("websocket")
+                        // Auth configuration
+                        if (token.isNotEmpty()) {
+                            auth = mapOf("token" to token)
+                        }
+                        // Reconnection options
+                        reconnection = true
+                        reconnectionAttempts = 5
+                        reconnectionDelay = 1000
+                        reconnectionDelayMax = 5000
+                        // Timeout
+                        timeout = CONNECT_TIMEOUT_MS
+                    }
+
+                    // Create socket connection to base URL
+                    socket = IO.socket(client.baseURL, options)
+
+                    var initialConnection = true
+
+                    // Setup timeout
+                    val timeoutJob = scope.launch {
+                        delay(CONNECT_TIMEOUT_MS)
+                        if (initialConnection) {
+                            initialConnection = false
+                            socket?.disconnect()
+                            socket = null
+                            _connectionState.value = ConnectionState.Disconnected
+                            if (continuation.isActive) {
+                                continuation.resumeWithException(
+                                    Exception("Connection timeout after ${CONNECT_TIMEOUT_MS}ms")
+                                )
+                            }
+                        }
+                    }
+
+                    socket?.apply {
+                        on(Socket.EVENT_CONNECT) {
+                            timeoutJob.cancel()
+                            _connectionState.value = ConnectionState.Connected
+                            println("[InsForge Realtime] Connected to Socket.IO server")
+
+                            // Re-subscribe to channels on every connect (initial + reconnects)
+                            for (channel in subscribedChannels) {
+                                emit("realtime:subscribe", JSONObject().apply {
+                                    put("channel", channel)
+                                })
+                            }
+
+                            notifyListeners("connect", null)
+
+                            if (initialConnection) {
+                                initialConnection = false
+                                if (continuation.isActive) {
+                                    continuation.resume(Unit)
+                                }
+                            }
+                        }
+
+                        on(Socket.EVENT_CONNECT_ERROR) { args ->
+                            timeoutJob.cancel()
+                            val error = args.firstOrNull()?.toString() ?: "Unknown error"
+                            _connectionState.value = ConnectionState.Error(error)
+                            println("[InsForge Realtime] Connection error: $error")
+
+                            notifyListeners("connect_error", error)
+
+                            if (initialConnection) {
+                                initialConnection = false
+                                if (continuation.isActive) {
+                                    continuation.resumeWithException(Exception(error))
+                                }
+                            }
+                        }
+
+                        on(Socket.EVENT_DISCONNECT) { args ->
+                            _connectionState.value = ConnectionState.Disconnected
+                            val reason = args.firstOrNull()?.toString() ?: "unknown"
+                            println("[InsForge Realtime] Disconnected: $reason")
+                            notifyListeners("disconnect", reason)
+                        }
+
+                        on("realtime:error") { args ->
+                            val data = args.firstOrNull() as? JSONObject
+                            val error = RealtimeError(
+                                code = data?.optString("code") ?: "UNKNOWN",
+                                message = data?.optString("message") ?: "Unknown error"
+                            )
+                            println("[InsForge Realtime] Error: ${error.message}")
+                            notifyListeners("error", error)
+                        }
+
+                        // Listen for incoming realtime messages
+                        on("realtime:message") { args ->
+                            handleIncomingEvent("realtime:message", args)
+                        }
+
+                        // Connect
+                        connect()
+                    }
+
+                } catch (e: Exception) {
+                    _connectionState.value = ConnectionState.Error(e.message ?: "Failed to connect")
+                    if (continuation.isActive) {
+                        continuation.resumeWithException(e)
+                    }
+                }
+            }
+        }
+
+        connectJob?.await()
+    }
+
+    /**
+     * Disconnect from the realtime server
+     */
+    fun disconnect() {
+        socket?.disconnect()
+        socket?.off()
+        socket = null
+        subscribedChannels.clear()
+        _connectionState.value = ConnectionState.Disconnected
+    }
+
+    // ============ Subscription ============
+
+    /**
+     * Subscribe to a channel.
+     *
+     * Automatically connects if not already connected.
+     *
+     * @param channel Channel name (e.g., "orders:123", "broadcast")
+     * @return SubscribeResponse indicating success or failure
+     */
+    suspend fun subscribe(channel: String): SubscribeResponse {
+        // Already subscribed, return success
+        if (subscribedChannels.contains(channel)) {
+            return SubscribeResponse(ok = true, channel = channel)
+        }
+
+        // Auto-connect if not connected
+        if (socket?.connected() != true) {
+            try {
+                connect()
+            } catch (e: Exception) {
+                return SubscribeResponse(
+                    ok = false,
+                    channel = channel,
+                    error = RealtimeError("CONNECTION_FAILED", e.message ?: "Connection failed")
+                )
+            }
+        }
+
+        return suspendCancellableCoroutine { continuation ->
+            socket?.emit("realtime:subscribe", arrayOf(JSONObject().apply {
+                put("channel", channel)
+            })) { args ->
+                val response = args.firstOrNull() as? JSONObject
+                val ok = response?.optBoolean("ok", false) ?: false
+
+                if (ok) {
+                    subscribedChannels.add(channel)
+                }
+
+                val result = SubscribeResponse(
+                    ok = ok,
+                    channel = channel,
+                    error = if (!ok) {
+                        val errorObj = response?.optJSONObject("error")
+                        RealtimeError(
+                            code = errorObj?.optString("code") ?: "SUBSCRIBE_FAILED",
+                            message = errorObj?.optString("message") ?: "Subscription failed"
+                        )
+                    } else null
+                )
+
+                if (continuation.isActive) {
+                    continuation.resume(result)
+                }
+            }
+        }
+    }
+
+    /**
+     * Unsubscribe from a channel (fire-and-forget)
+     *
+     * @param channel Channel name to unsubscribe from
+     */
+    fun unsubscribe(channel: String) {
+        subscribedChannels.remove(channel)
+
+        if (socket?.connected() == true) {
+            socket?.emit("realtime:unsubscribe", JSONObject().apply {
+                put("channel", channel)
+            })
+        }
+    }
+
+    /**
+     * Get all currently subscribed channels
+     *
+     * @return List of channel names
+     */
+    fun getSubscribedChannels(): List<String> {
+        return subscribedChannels.toList()
+    }
+
+    // ============ Publishing ============
+
+    /**
+     * Publish a message to a channel
+     *
+     * @param channel Channel name
+     * @param event Event name
+     * @param payload Message payload
+     * @throws IllegalStateException if not connected
+     */
+    fun publish(channel: String, event: String, payload: Map<String, Any>) {
+        if (socket?.connected() != true) {
+            throw IllegalStateException("Not connected to realtime server. Call connect() first.")
+        }
+
+        socket?.emit("realtime:publish", JSONObject().apply {
+            put("channel", channel)
+            put("event", event)
+            put("payload", JSONObject(payload))
+        })
+    }
+
+    // ============ Event Listeners ============
+
+    /**
+     * Listen for events.
+     *
+     * Reserved event names:
+     * - "connect" - Fired when connected to the server
+     * - "connect_error" - Fired when connection fails (payload: String error message)
+     * - "disconnect" - Fired when disconnected (payload: String reason)
+     * - "error" - Fired when a realtime error occurs (payload: RealtimeError)
+     *
+     * All other events receive a SocketMessage payload with metadata.
+     *
+     * @param event Event name to listen for
+     * @param callback Callback function when event is received
+     */
+    fun <T> on(event: String, callback: EventCallback<T>) {
+        eventListeners.getOrPut(event) { ConcurrentHashMap.newKeySet() }.add(callback)
+    }
+
+    /**
+     * Remove a listener for a specific event
+     *
+     * @param event Event name
+     * @param callback The callback function to remove
+     */
+    fun <T> off(event: String, callback: EventCallback<T>) {
+        eventListeners[event]?.remove(callback)
+        if (eventListeners[event]?.isEmpty() == true) {
+            eventListeners.remove(event)
+        }
+    }
+
+    /**
+     * Listen for an event only once, then automatically remove the listener
+     *
+     * @param event Event name to listen for
+     * @param callback Callback function when event is received
+     */
+    fun <T> once(event: String, callback: EventCallback<T>) {
+        val wrapper = object : EventCallback<T> {
+            override fun onEvent(payload: T?) {
+                off(event, this)
+                callback.onEvent(payload)
+            }
+        }
+        on(event, wrapper)
+    }
+
+    @Suppress("UNCHECKED_CAST")
+    private fun <T> notifyListeners(event: String, payload: T?) {
+        eventListeners[event]?.forEach { callback ->
+            try {
+                (callback as EventCallback<T>).onEvent(payload)
+            } catch (e: Exception) {
+                println("[InsForge Realtime] Error in $event callback: ${e.message}")
+            }
+        }
+    }
+
+    private fun handleIncomingEvent(event: String, args: Array<out Any?>) {
+        try {
+            val data = args.firstOrNull() as? JSONObject ?: return
+
+            // Parse meta object (server format: { meta: {...}, ...payload })
+            val metaObj = data.optJSONObject("meta")
+            val meta = if (metaObj != null) {
+                SocketMessageMeta(
+                    channel = metaObj.optString("channel", null),
+                    messageId = metaObj.optString("messageId", ""),
+                    senderType = metaObj.optString("senderType", "user"),
+                    senderId = metaObj.optString("senderId", null),
+                    timestamp = metaObj.optString("timestamp", "")
+                )
+            } else {
+                // Fallback for legacy/simple format
+                SocketMessageMeta(
+                    channel = data.optString("channel", null),
+                    messageId = data.optString("messageId", ""),
+                    senderType = data.optString("senderType", "user"),
+                    senderId = data.optString("senderId", null),
+                    timestamp = data.optString("timestamp", "")
+                )
+            }
+
+            // Extract payload - everything except meta is payload
+            // For passthrough schema, payload fields are at root level alongside meta
+            val payloadObj = if (metaObj != null) {
+                // Remove meta from data to get payload
+                val payloadData = JSONObject(data.toString())
+                payloadData.remove("meta")
+                payloadData
+            } else {
+                data.optJSONObject("payload") ?: JSONObject()
+            }
+
+            val message = SocketMessage(
+                meta = meta,
+                event = data.optString("event", event),
+                payload = parsePayload(payloadObj)
+            )
+
+            // Notify listeners for both the raw event and the specific message event
+            notifyListeners(event, message)
+            if (message.event != event) {
+                notifyListeners(message.event, message)
+            }
+        } catch (e: Exception) {
+            println("[InsForge Realtime] Error handling event $event: ${e.message}")
+        }
+    }
+
+    private fun parsePayload(jsonObj: JSONObject?): JsonObject {
+        if (jsonObj == null) return buildJsonObject { }
+        return try {
+            json.parseToJsonElement(jsonObj.toString()) as? JsonObject ?: buildJsonObject { }
+        } catch (e: Exception) {
+            buildJsonObject { }
+        }
+    }
+
     // ============ High-Level Channel API ============
 
     /**
-     * Create or get an existing channel.
-     *
-     * This is the recommended way to interact with realtime features.
+     * Create or get an existing channel (advanced API).
      *
      * @param topic Channel topic/name
      * @param configure Optional channel configuration
      * @return InsforgeChannel instance
-     *
-     * Example:
-     * ```kotlin
-     * val channel = client.realtime.channel("room-1") {
-     *     broadcast {
-     *         acknowledgeBroadcasts = true
-     *     }
-     * }
-     *
-     * // Setup listeners BEFORE subscribing
-     * channel.broadcastFlow<Message>("chat")
-     *     .onEach { println(it) }
-     *     .launchIn(scope)
-     *
-     * channel.postgresChangeFlow<PostgresAction.Insert>("public") {
-     *     table = "messages"
-     * }.onEach { println(it.record) }
-     *   .launchIn(scope)
-     *
-     * // Subscribe to channel
-     * channel.subscribe(blockUntilSubscribed = true)
-     * ```
      */
     fun channel(
         topic: String,
@@ -180,165 +555,32 @@ class Realtime internal constructor(
         channels.keys.toList().forEach { removeChannel(it) }
     }
 
-    // ============ WebSocket Connection ============
+    // ============ Internal Methods for Channel Support ============
 
-    /**
-     * Connect to realtime WebSocket
-     */
-    suspend fun connect() {
-        if (_connectionState.value is ConnectionState.Connected) {
-            return // Already connected
-        }
+    internal fun sendChannelMessage(topic: String, event: String, payload: JsonObject) {
+        publish(topic, event, payload.toMap())
+    }
 
-        _connectionState.value = ConnectionState.Connecting
-
-        try {
-            connectionJob = scope.launch {
-                client.httpClient.webSocket(
-                    host = wsUrl.removePrefix("wss://").removePrefix("ws://").split("/")[0],
-                    path = "/realtime",
-                    request = {
-                        header("x-api-key", client.anonKey)
-                    }
-                ) {
-                    wsSession = this
-                    _connectionState.value = ConnectionState.Connected
-
-                    // Start message handler
-                    launch { handleIncomingMessages() }
-
-                    // Keep connection alive
-                    try {
-                        for (frame in incoming) {
-                            if (frame is Frame.Text) {
-                                val text = frame.readText()
-                                try {
-                                    // Try to parse as channel message (high-level API)
-                                    val jsonElement = json.parseToJsonElement(text)
-                                    if (jsonElement is JsonObject) {
-                                        val topic = jsonElement["topic"]?.jsonPrimitive?.contentOrNull
-                                        val event = jsonElement["event"]?.jsonPrimitive?.contentOrNull
-                                        val payload = jsonElement["payload"]?.jsonObject
-
-                                        if (topic != null && event != null && payload != null) {
-                                            // Route to high-level channel
-                                            routeMessageToChannel(topic, event, payload)
-                                        }
-                                    }
-
-                                    // Also try legacy message format
-                                    try {
-                                        val message = json.decodeFromString<RealtimeMessage>(text)
-                                        messageChannel.send(message)
-                                    } catch (e: Exception) {
-                                        // Not a legacy message format
-                                    }
-                                } catch (e: Exception) {
-                                    // Ignore parsing errors
-                                }
-                            }
-                        }
-                    } catch (e: Exception) {
-                        _connectionState.value = ConnectionState.Error(e.message ?: "Connection error")
-                    }
-                }
-            }
-        } catch (e: Exception) {
-            _connectionState.value = ConnectionState.Error(e.message ?: "Failed to connect")
-            throw e
+    internal suspend fun broadcastViaHttp(topic: String, event: String, payload: JsonObject) {
+        client.httpClient.post("$baseUrl/broadcast") {
+            contentType(ContentType.Application.Json)
+            setBody(buildJsonObject {
+                put("topic", topic)
+                put("event", event)
+                put("payload", payload)
+            })
         }
     }
 
-    /**
-     * Disconnect from realtime WebSocket
-     */
-    suspend fun disconnect() {
-        wsSession?.close()
-        wsSession = null
-        connectionJob?.cancel()
-        _connectionState.value = ConnectionState.Disconnected
+    internal fun registerChannel(channel: InsforgeChannelImpl) {
+        channels[channel.topic] = channel
     }
 
-    /**
-     * Subscribe to a channel
-     *
-     * @param channelName Channel name to subscribe to
-     * @param handler Message handler callback
-     */
-    fun subscribe(channelName: String, handler: suspend (RealtimeMessage) -> Unit) {
-        subscriptions.getOrPut(channelName) { mutableListOf() }.add(handler)
-
-        // Send subscribe message to server
-        scope.launch {
-            wsSession?.send(Frame.Text(Json.encodeToString(mapOf(
-                "type" to "subscribe",
-                "channel" to channelName
-            ))))
-        }
+    internal fun unregisterChannel(channel: InsforgeChannelImpl) {
+        channels.remove(channel.topic)
     }
 
-    /**
-     * Unsubscribe from a channel
-     *
-     * @param channelName Channel name to unsubscribe from
-     */
-    fun unsubscribe(channelName: String) {
-        subscriptions.remove(channelName)
-
-        // Send unsubscribe message to server
-        scope.launch {
-            wsSession?.send(Frame.Text(Json.encodeToString(mapOf(
-                "type" to "unsubscribe",
-                "channel" to channelName
-            ))))
-        }
-    }
-
-    /**
-     * Publish a message to a channel
-     *
-     * @param channelName Channel name
-     * @param eventName Event name
-     * @param payload Message payload
-     */
-    suspend fun publish(channelName: String, eventName: String, payload: Map<String, Any>) {
-        wsSession?.send(Frame.Text(Json.encodeToString(mapOf(
-            "type" to "publish",
-            "channel" to channelName,
-            "event" to eventName,
-            "payload" to payload
-        ))))
-    }
-
-    private suspend fun handleIncomingMessages() {
-        for (message in messageChannel) {
-            // Find matching subscriptions
-            subscriptions.forEach { (pattern, handlers) ->
-                if (matchesPattern(message.channelName, pattern)) {
-                    handlers.forEach { handler ->
-                        scope.launch {
-                            try {
-                                handler(message)
-                            } catch (e: Exception) {
-                                // Log error but don't crash
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    private fun matchesPattern(channel: String, pattern: String): Boolean {
-        if (pattern == channel) return true
-        if (pattern.endsWith("*")) {
-            val prefix = pattern.dropLast(1)
-            return channel.startsWith(prefix)
-        }
-        return false
-    }
-
-    // ============ Channel Management (REST API) ============
+    // ============ REST API (Channel Management) ============
 
     /**
      * List all channels (admin only)
@@ -350,8 +592,6 @@ class Realtime internal constructor(
 
     /**
      * Get channel by ID
-     *
-     * @param channelId Channel UUID
      */
     suspend fun getChannel(channelId: String): RealtimeChannel {
         val response = client.httpClient.get("$baseUrl/channels/$channelId")
@@ -360,11 +600,6 @@ class Realtime internal constructor(
 
     /**
      * Create a new channel (admin only)
-     *
-     * @param pattern Channel pattern (supports wildcards like "chat:*")
-     * @param description Optional description
-     * @param webhookUrls Optional webhook URLs
-     * @param enabled Whether channel is enabled
      */
     suspend fun createChannel(
         pattern: String,
@@ -386,12 +621,6 @@ class Realtime internal constructor(
 
     /**
      * Update a channel (admin only)
-     *
-     * @param channelId Channel UUID
-     * @param pattern Updated pattern
-     * @param description Updated description
-     * @param webhookUrls Updated webhook URLs
-     * @param enabled Updated enabled status
      */
     suspend fun updateChannel(
         channelId: String,
@@ -414,23 +643,16 @@ class Realtime internal constructor(
 
     /**
      * Delete a channel (admin only)
-     *
-     * @param channelId Channel UUID
      */
     suspend fun deleteChannel(channelId: String): DeleteChannelResponse {
         val response = client.httpClient.delete("$baseUrl/channels/$channelId")
         return handleResponse(response)
     }
 
-    // ============ Message History ============
+    // ============ REST API (Message History) ============
 
     /**
      * Get message history
-     *
-     * @param channelId Optional channel ID filter
-     * @param eventName Optional event name filter
-     * @param limit Maximum number of messages
-     * @param offset Offset for pagination
      */
     suspend fun getMessages(
         channelId: String? = null,
@@ -449,9 +671,6 @@ class Realtime internal constructor(
 
     /**
      * Get message statistics
-     *
-     * @param channelId Optional channel ID filter
-     * @param since Optional timestamp filter
      */
     suspend fun getMessageStats(
         channelId: String? = null,
@@ -464,58 +683,24 @@ class Realtime internal constructor(
         return handleResponse(response)
     }
 
-    // ============ Internal Methods for Channel Support ============
-
-    /**
-     * Send a message to a channel topic (internal use by InsforgeChannelImpl)
-     */
-    internal suspend fun sendChannelMessage(topic: String, event: String, payload: JsonObject) {
-        val ref = ++messageRef
-        val message = buildJsonObject {
-            put("topic", topic)
-            put("event", event)
-            put("payload", payload)
-            put("ref", ref.toString())
-        }
-        wsSession?.send(Frame.Text(json.encodeToString(message)))
-    }
-
-    /**
-     * Send broadcast via HTTP (used when not connected via WebSocket)
-     */
-    internal suspend fun broadcastViaHttp(topic: String, event: String, payload: JsonObject) {
-        client.httpClient.post("$baseUrl/broadcast") {
-            contentType(ContentType.Application.Json)
-            setBody(buildJsonObject {
-                put("topic", topic)
-                put("event", event)
-                put("payload", payload)
-            })
-        }
-    }
-
-    /**
-     * Register a channel for message routing (internal use)
-     */
-    internal fun registerChannel(channel: InsforgeChannelImpl) {
-        channels[channel.topic] = channel
-    }
-
-    /**
-     * Unregister a channel (internal use)
-     */
-    internal fun unregisterChannel(channel: InsforgeChannelImpl) {
-        channels.remove(channel.topic)
-    }
-
-    /**
-     * Route incoming WebSocket message to appropriate channel
-     */
-    private fun routeMessageToChannel(topic: String, event: String, payload: JsonObject) {
-        channels[topic]?.onMessage(event, payload)
-    }
-
     // ============ Helper Methods ============
+
+    private fun JsonObject.toMap(): Map<String, Any> {
+        return this.entries.associate { (key, value) ->
+            key to when {
+                value is kotlinx.serialization.json.JsonPrimitive -> value.content
+                value is JsonObject -> value.toMap()
+                value is kotlinx.serialization.json.JsonArray -> value.map {
+                    when (it) {
+                        is kotlinx.serialization.json.JsonPrimitive -> it.content
+                        is JsonObject -> it.toMap()
+                        else -> it.toString()
+                    }
+                }
+                else -> value.toString()
+            }
+        }
+    }
 
     @PublishedApi
     internal suspend inline fun <reified T> handleResponse(response: HttpResponse): T {
@@ -535,7 +720,7 @@ class Realtime internal constructor(
     internal suspend fun handleError(response: HttpResponse): InsforgeHttpException {
         val errorBody = response.bodyAsText()
         val error = try {
-            kotlinx.serialization.json.Json.decodeFromString<io.insforge.exceptions.ErrorResponse>(errorBody)
+            Json.decodeFromString<io.insforge.exceptions.ErrorResponse>(errorBody)
         } catch (e: Exception) {
             throw InsforgeHttpException(
                 statusCode = response.status.value,
@@ -553,26 +738,10 @@ class Realtime internal constructor(
     }
 
     override fun close() {
-        // Close all high-level channels
         channels.values.forEach { it.close() }
         channels.clear()
-
         scope.cancel()
-        runBlocking {
-            disconnect()
-        }
-    }
-
-    companion object : InsforgePluginProvider<RealtimeConfig, Realtime> {
-        override val key: String = "realtime"
-
-        override fun createConfig(configure: RealtimeConfig.() -> Unit): RealtimeConfig {
-            return RealtimeConfig().apply(configure)
-        }
-
-        override fun create(client: InsforgeClient, config: RealtimeConfig): Realtime {
-            return Realtime(client, config)
-        }
+        disconnect()
     }
 }
 

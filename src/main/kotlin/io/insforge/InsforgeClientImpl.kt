@@ -43,10 +43,17 @@ internal class InsforgeClientImpl(
 
     override fun getCurrentAccessToken(): String? {
         return try {
+            // First try to get token from Auth plugin's session
             val auth = pluginManager.getPlugin("auth") as? Auth
-            auth?.currentSession?.value?.accessToken
+            val sessionToken = auth?.currentSession?.value?.accessToken
+            if (sessionToken != null) {
+                return sessionToken
+            }
+            // Fallback to config's accessToken lambda
+            config.accessToken?.invoke()
         } catch (e: Exception) {
-            null
+            // If Auth plugin is not installed, try config's accessToken lambda
+            config.accessToken?.invoke()
         }
     }
 

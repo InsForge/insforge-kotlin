@@ -1,7 +1,9 @@
 package io.insforge.realtime
 
 import io.insforge.TestConfig
+import io.insforge.database.database
 import io.insforge.exceptions.InsforgeHttpException
+import io.insforge.realtime.models.SocketMessage
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.take
@@ -12,6 +14,8 @@ import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.addJsonObject
+import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import kotlin.test.*
@@ -29,7 +33,8 @@ class RealtimeTest {
 
     @BeforeTest
     fun setup() {
-        client = TestConfig.createRealtimeClient()
+        // Use authenticated client with JWT token for Socket.IO tests
+        client = TestConfig.createAuthenticatedRealtimeClient()
     }
 
     @AfterTest
@@ -665,24 +670,22 @@ class RealtimeTest {
         println("Correctly threw exception when calling postgresChangeFlow after subscribe")
     }
 
-    // ============ Low-Level Subscription Tests (Legacy) ============
+    // ============ Socket.IO Subscription Tests ============
 
     @Test
-    fun `test subscribe to channel`() = runTest {
+    fun `test subscribe to channel with new API`() = runTest {
         try {
-            client.realtime.connect()
-            delay(500)
+            // Subscribe auto-connects
+            val response = client.realtime.subscribe("test-channel")
 
-            var messageReceived = false
-            client.realtime.subscribe("test-channel") { message ->
-                println("Received message: ${message.eventName} - ${message.payload}")
-                messageReceived = true
+            println("Subscribe response: ok=${response.ok}, channel=${response.channel}")
+            if (!response.ok) {
+                println("Subscribe error: ${response.error?.code} - ${response.error?.message}")
             }
 
-            println("Subscribed to test-channel")
-
-            // Wait a bit for any messages
-            delay(1000)
+            // Verify subscribed channels
+            val channels = client.realtime.getSubscribedChannels()
+            println("Subscribed channels: $channels")
 
             client.realtime.unsubscribe("test-channel")
             client.realtime.disconnect()
@@ -692,16 +695,16 @@ class RealtimeTest {
     }
 
     @Test
-    fun `test subscribe to wildcard channel`() = runTest {
+    fun `test subscribe to wildcard channel with new API`() = runTest {
         try {
-            client.realtime.connect()
-            delay(500)
+            val response = client.realtime.subscribe("chat:*")
 
-            client.realtime.subscribe("chat:*") { message ->
-                println("Received on wildcard: ${message.channelName} - ${message.eventName}")
+            println("Wildcard subscribe response: ok=${response.ok}")
+            if (response.ok) {
+                println("Successfully subscribed to chat:* wildcard channel")
+            } else {
+                println("Wildcard subscribe error: ${response.error?.message}")
             }
-
-            println("Subscribed to chat:* wildcard channel")
 
             delay(1000)
             client.realtime.disconnect()
@@ -711,17 +714,19 @@ class RealtimeTest {
     }
 
     @Test
-    fun `test unsubscribe from channel`() = runTest {
+    fun `test unsubscribe from channel with new API`() = runTest {
         try {
-            client.realtime.connect()
-            delay(500)
+            // Subscribe first
+            val response = client.realtime.subscribe("temp-channel")
+            println("Subscribed: ${response.ok}")
 
-            client.realtime.subscribe("temp-channel") { message ->
-                println("Should not receive: $message")
-            }
-
+            // Unsubscribe
             client.realtime.unsubscribe("temp-channel")
             println("Unsubscribed from temp-channel")
+
+            // Verify
+            val channels = client.realtime.getSubscribedChannels()
+            assertFalse(channels.contains("temp-channel"))
 
             client.realtime.disconnect()
         } catch (e: Exception) {
@@ -729,25 +734,52 @@ class RealtimeTest {
         }
     }
 
-    // ============ Low-Level Publish Tests (Legacy) ============
-
     @Test
-    fun `test publish message`() = runTest {
+    fun `test event listeners with on and off`() = runTest {
         try {
             client.realtime.connect()
             delay(500)
 
-            // Subscribe first to receive our own message
+            var messageCount = 0
+            val callback = Realtime.EventCallback<SocketMessage> { message ->
+                messageCount++
+                println("Received message #$messageCount: ${message?.event}")
+            }
+
+            // Register listener
+            client.realtime.on("test-event", callback)
+            println("Registered listener for test-event")
+
+            // Remove listener
+            client.realtime.off("test-event", callback)
+            println("Removed listener for test-event")
+
+            client.realtime.disconnect()
+        } catch (e: Exception) {
+            println("Event listener test failed: ${e.message}")
+        }
+    }
+
+    // ============ Socket.IO Publish Tests ============
+
+    @Test
+    fun `test publish message with new API`() = runTest {
+        try {
+            // Subscribe first (auto-connects)
+            val subResponse = client.realtime.subscribe("test-publish")
+            println("Subscribed: ${subResponse.ok}")
+
+            // Setup listener to receive our own message
             var receivedMessage = false
-            client.realtime.subscribe("test-publish") { message ->
-                println("Received published message: $message")
+            client.realtime.on<SocketMessage>("realtime:message") { message ->
+                println("Received published message: ${message?.event} - ${message?.payload}")
                 receivedMessage = true
             }
 
             // Publish a message
             client.realtime.publish(
-                channelName = "test-publish",
-                eventName = "test.event",
+                channel = "test-publish",
+                event = "test.event",
                 payload = mapOf(
                     "message" to "Hello from Kotlin SDK",
                     "timestamp" to System.currentTimeMillis().toString()
@@ -766,14 +798,14 @@ class RealtimeTest {
     }
 
     @Test
-    fun `test publish complex payload`() = runTest {
+    fun `test publish complex payload with new API`() = runTest {
         try {
             client.realtime.connect()
             delay(500)
 
             client.realtime.publish(
-                channelName = "test-complex",
-                eventName = "user.action",
+                channel = "test-complex",
+                event = "user.action",
                 payload = mapOf(
                     "userId" to "user123",
                     "action" to "click",
@@ -787,6 +819,247 @@ class RealtimeTest {
             client.realtime.disconnect()
         } catch (e: Exception) {
             println("Complex publish test failed: ${e.message}")
+        }
+    }
+
+    // ============ Socket Properties Tests ============
+
+    @Test
+    fun `test isConnected and socketId properties`() = runTest {
+        try {
+            // Before connect
+            assertFalse(client.realtime.isConnected)
+            assertNull(client.realtime.socketId)
+
+            client.realtime.connect()
+            delay(500)
+
+            // After connect
+            if (client.realtime.isConnected) {
+                println("Connected with socketId: ${client.realtime.socketId}")
+                assertNotNull(client.realtime.socketId)
+            } else {
+                println("Not connected (server may not be running)")
+            }
+
+            client.realtime.disconnect()
+
+            // After disconnect
+            assertFalse(client.realtime.isConnected)
+        } catch (e: Exception) {
+            println("Socket properties test failed: ${e.message}")
+        }
+    }
+
+    // ============ Todos Table Realtime Tests ============
+
+    @Test
+    fun `test subscribe to todos channel`() = runTest {
+        try {
+            // Subscribe to todos channel (matches database table)
+            val response = client.realtime.subscribe("todos")
+
+            println("Subscribe to todos: ok=${response.ok}")
+            if (!response.ok) {
+                println("Error: ${response.error?.code} - ${response.error?.message}")
+            }
+
+            // Keep listening for a moment
+            delay(2000)
+
+            client.realtime.disconnect()
+        } catch (e: Exception) {
+            println("Todos subscribe test failed: ${e.message}")
+        }
+    }
+
+    @Test
+    fun `test listen for todos changes and trigger update`() = runTest {
+        try {
+            // Setup listener for realtime messages
+            val receivedMessages = mutableListOf<SocketMessage>()
+
+            client.realtime.on<SocketMessage>("realtime:message") { message ->
+                message?.let {
+                    receivedMessages.add(it)
+                    println("Received realtime message:")
+                    println("  Channel: ${it.channel}")
+                    println("  Event: ${it.event}")
+                    println("  Payload: ${it.payload}")
+                    println("  Timestamp: ${it.timestamp}")
+                }
+            }
+
+            // Also listen for specific events
+            client.realtime.on<SocketMessage>("todo.created") { message ->
+                println("TODO CREATED: ${message?.payload}")
+            }
+
+            client.realtime.on<SocketMessage>("todo.updated") { message ->
+                println("TODO UPDATED: ${message?.payload}")
+            }
+
+            client.realtime.on<SocketMessage>("todo.deleted") { message ->
+                println("TODO DELETED: ${message?.payload}")
+            }
+
+            // Subscribe to todos channel
+            val response = client.realtime.subscribe("todos")
+            println("Subscribed to todos: ${response.ok}")
+
+            if (response.ok) {
+                println("\n=== Now listening for todos changes for 10 seconds ===")
+                println("Try inserting/updating/deleting a todo from another client...\n")
+
+                // Wait for potential messages
+                delay(10000)
+
+                println("\n=== Finished listening ===")
+                println("Total messages received: ${receivedMessages.size}")
+            }
+
+            client.realtime.disconnect()
+        } catch (e: Exception) {
+            println("Todos listen test failed: ${e.message}")
+        }
+    }
+
+    @Test
+    fun `test todos realtime with database insert`() = runTest {
+        try {
+            val receivedMessages = mutableListOf<SocketMessage>()
+
+            // Setup listener
+            client.realtime.on<SocketMessage>("realtime:message") { message ->
+                message?.let {
+                    receivedMessages.add(it)
+                    println("Realtime message received: ${it.event} - ${it.payload}")
+                }
+            }
+
+            // Subscribe to todos channel
+            val subResponse = client.realtime.subscribe("todos")
+            println("Subscribed to todos: ${subResponse.ok}")
+
+            if (subResponse.ok) {
+                // Insert a new todo using the database API
+                val timestamp = System.currentTimeMillis()
+                val records = buildJsonArray {
+                    addJsonObject {
+                        put("title", "Realtime Test Todo $timestamp")
+                        put("is_completed", false)
+                    }
+                }
+
+                println("\nInserting todo via database API...")
+                val insertedTodos = client.database.from("todos")
+                    .insert(records)
+                    .returning()
+                    .execute<JsonObject>()
+
+                println("Inserted todo: ${insertedTodos.firstOrNull()}")
+
+                // Wait for realtime notification
+                println("\nWaiting for realtime notification...")
+                delay(3000)
+
+                println("\nMessages received: ${receivedMessages.size}")
+                receivedMessages.forEach {
+                    println("  - ${it.event}: ${it.payload}")
+                }
+
+                // Cleanup - delete the inserted todo
+                insertedTodos.firstOrNull()?.let { todo ->
+                    val todoId = todo["id"]?.toString()?.removeSurrounding("\"")
+                    if (todoId != null) {
+                        println("\nCleaning up: deleting todo $todoId")
+                        client.database.from("todos")
+                            .eq("id", todoId)
+                            .delete()
+                            .execute<JsonObject>()
+                    }
+                }
+            }
+
+            client.realtime.disconnect()
+        } catch (e: Exception) {
+            println("Todos realtime with insert test failed: ${e.message}")
+            e.printStackTrace()
+        }
+    }
+
+    @Test
+    fun `test todos realtime full CRUD cycle`() = runTest {
+        try {
+            val events = mutableListOf<String>()
+
+            // Setup listeners for different event types
+            client.realtime.on<SocketMessage>("realtime:message") { message ->
+                message?.let {
+                    events.add(it.event)
+                    println("[${events.size}] Event: ${it.event}, Payload: ${it.payload}")
+                }
+            }
+
+            // Subscribe
+            val subResponse = client.realtime.subscribe("todos")
+            println("Subscribed: ${subResponse.ok}")
+
+            if (subResponse.ok) {
+                val timestamp = System.currentTimeMillis()
+
+                // 1. INSERT
+                println("\n--- Step 1: INSERT ---")
+                val insertRecords = buildJsonArray {
+                    addJsonObject {
+                        put("title", "CRUD Test $timestamp")
+                        put("is_completed", false)
+                    }
+                }
+                val inserted = client.database.from("todos")
+                    .insert(insertRecords)
+                    .returning()
+                    .execute<JsonObject>()
+
+                val todoId = inserted.firstOrNull()?.get("id")?.toString()?.removeSurrounding("\"")
+                println("Inserted todo ID: $todoId")
+                delay(1000)
+
+                if (todoId != null) {
+                    // 2. UPDATE
+                    println("\n--- Step 2: UPDATE ---")
+                    val updateData = buildJsonObject {
+                        put("is_completed", true)
+                        put("title", "CRUD Test Updated $timestamp")
+                    }
+                    client.database.from("todos")
+                        .eq("id", todoId)
+                        .update(updateData)
+                        .execute<JsonObject>()
+                    println("Updated todo")
+                    delay(1000)
+
+                    // 3. DELETE
+                    println("\n--- Step 3: DELETE ---")
+                    client.database.from("todos")
+                        .eq("id", todoId)
+                        .delete()
+                        .execute<JsonObject>()
+                    println("Deleted todo")
+                    delay(1000)
+                }
+
+                println("\n--- Summary ---")
+                println("Total events received: ${events.size}")
+                events.forEachIndexed { index, event ->
+                    println("  ${index + 1}. $event")
+                }
+            }
+
+            client.realtime.disconnect()
+        } catch (e: Exception) {
+            println("CRUD cycle test failed: ${e.message}")
+            e.printStackTrace()
         }
     }
 
@@ -985,9 +1258,13 @@ class RealtimeTest {
             // Initial state
             assertTrue(client.realtime.connectionState.value is Realtime.ConnectionState.Disconnected)
 
-            // Start connecting
-            launch {
-                client.realtime.connect()
+            // Start connecting in a job we can cancel
+            val connectJob = launch {
+                try {
+                    client.realtime.connect()
+                } catch (e: Exception) {
+                    // Expected to fail with invalid token
+                }
             }
 
             // Should transition to connecting
@@ -995,10 +1272,13 @@ class RealtimeTest {
             val connectingState = client.realtime.connectionState.value
             println("State during connection: $connectingState")
 
-            // Wait for connection
+            // Wait for connection attempt to complete or fail
             delay(1000)
             val finalState = client.realtime.connectionState.value
             println("Final state: $finalState")
+
+            // Cancel the job if still running
+            connectJob.cancel()
 
             // Disconnect
             client.realtime.disconnect()

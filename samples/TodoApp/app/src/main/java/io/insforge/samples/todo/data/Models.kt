@@ -11,7 +11,8 @@ data class Todo(
     val id: String? = null,
     val title: String,
     val description: String? = null,
-    val completed: Boolean = false,
+    @SerialName("is_completed")
+    val completed: Boolean? = false,
     @SerialName("user_id")
     val userId: String? = null,
     @SerialName("created_at")
@@ -27,6 +28,7 @@ data class Todo(
 data class CreateTodoRequest(
     val title: String,
     val description: String? = null,
+    @SerialName("is_completed")
     val completed: Boolean = false,
     @SerialName("user_id")
     val userId: String
@@ -39,6 +41,7 @@ data class CreateTodoRequest(
 data class UpdateTodoRequest(
     val title: String? = null,
     val description: String? = null,
+    @SerialName("is_completed")
     val completed: Boolean? = null
 )
 

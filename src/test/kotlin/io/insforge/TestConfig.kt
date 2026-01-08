@@ -104,6 +104,27 @@ object TestConfig {
             baseURL = BASE_URL,
             anonKey = ANON_KEY
         ) {
+            // Realtime needs Database for the todos tests
+            install(Database)
+            install(Realtime)
+        }
+    }
+
+    // JWT token for authenticated user testing
+    const val TEST_JWT_TOKEN = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIwODVhNDgxZS05NGI4LTRiZjktYjNhMC03ZjBlNTBmN2EwNzIiLCJlbWFpbCI6Imp1bndlbi5mZW5nQGluc2ZvcmdlLmRldiIsInJvbGUiOiJhdXRoZW50aWNhdGVkIiwiaWF0IjoxNzY3NzQyMTE2LCJleHAiOjE3NjgzNDY5MTZ9.jhfprod2CU1Bn2j92wG9_j0MdmbtycpRI0SHoqqDtcc"
+
+    /**
+     * Create a test client with JWT token for authenticated realtime testing
+     */
+    fun createAuthenticatedRealtimeClient(): InsforgeClient {
+        return createInsforgeClient(
+            baseURL = BASE_URL,
+            anonKey = ANON_KEY
+        ) {
+            // Use JWT token for authentication
+            accessToken = { TEST_JWT_TOKEN }
+            // Realtime needs Database for the todos tests
+            install(Database)
             install(Realtime)
         }
     }

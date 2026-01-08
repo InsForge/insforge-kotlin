@@ -29,8 +29,8 @@ dependencies {
     implementation("io.ktor:ktor-serialization-kotlinx-json:2.3.7")
     implementation("io.ktor:ktor-client-logging:2.3.7")
 
-    // WebSocket support for Realtime
-    implementation("io.ktor:ktor-client-websockets:2.3.7")
+    // Socket.IO client for Realtime (InsForge uses Socket.IO, not raw WebSocket)
+    implementation("io.socket:socket.io-client:2.1.1")
 
     // Testing
     testImplementation("org.jetbrains.kotlin:kotlin-test")

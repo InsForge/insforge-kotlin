@@ -75,7 +75,9 @@ fun TodoApp(
                 onCreateTodo = todoViewModel::createTodo,
                 onToggleTodo = todoViewModel::toggleTodoCompleted,
                 onDeleteTodo = todoViewModel::deleteTodo,
-                onSignOut = authViewModel::signOut
+                onSignOut = authViewModel::signOut,
+                onStartRealtimeSync = todoViewModel::startRealtimeSync,
+                onStopRealtimeSync = todoViewModel::stopRealtimeSync
             )
         }
     }
