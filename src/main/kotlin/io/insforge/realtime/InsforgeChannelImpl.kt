@@ -28,6 +28,11 @@ internal class InsforgeChannelImpl(
         isLenient = true
     }
 
+    // Event listener references for cleanup
+    private var insertListener: Realtime.EventCallback<io.insforge.realtime.models.SocketMessage>? = null
+    private var updateListener: Realtime.EventCallback<io.insforge.realtime.models.SocketMessage>? = null
+    private var deleteListener: Realtime.EventCallback<io.insforge.realtime.models.SocketMessage>? = null
+
     // ============ Subscription ============
 
     override suspend fun subscribe(blockUntilSubscribed: Boolean) {
@@ -38,27 +43,94 @@ internal class InsforgeChannelImpl(
         _status.value = InsforgeChannel.Status.SUBSCRIBING
 
         try {
-            // Build join payload with configurations
-            val joinPayload = buildJoinPayload()
+            // Use low-level subscribe API (Socket.IO pub/sub)
+            val response = realtime.subscribe(topic)
 
-            // Send join message through realtime connection (non-suspend)
-            realtime.sendChannelMessage(
-                topic = topic,
-                event = "phx_join",
-                payload = joinPayload
-            )
+            if (response.ok) {
+                // Register event listeners for postgres changes
+                setupEventListeners()
 
-            // Register this channel with the realtime instance
-            realtime.registerChannel(this)
+                // Register this channel with the realtime instance
+                realtime.registerChannel(this)
 
-            if (blockUntilSubscribed) {
-                // Wait for subscription confirmation
-                _status.first { it == InsforgeChannel.Status.SUBSCRIBED }
+                _status.value = InsforgeChannel.Status.SUBSCRIBED
+            } else {
+                _status.value = InsforgeChannel.Status.UNSUBSCRIBED
+                throw Exception("Subscribe failed: ${response.error?.message ?: "Unknown error"}")
             }
         } catch (e: Exception) {
             _status.value = InsforgeChannel.Status.UNSUBSCRIBED
             throw e
         }
+    }
+
+    /**
+     * Setup event listeners for INSERT/UPDATE/DELETE events
+     */
+    private fun setupEventListeners() {
+        // Listen for INSERT events
+        insertListener = Realtime.EventCallback<io.insforge.realtime.models.SocketMessage> { message ->
+            message?.let { handleSocketMessage("INSERT", it) }
+        }
+        realtime.on("INSERT", insertListener!!)
+
+        // Listen for UPDATE events
+        updateListener = Realtime.EventCallback<io.insforge.realtime.models.SocketMessage> { message ->
+            message?.let { handleSocketMessage("UPDATE", it) }
+        }
+        realtime.on("UPDATE", updateListener!!)
+
+        // Listen for DELETE events
+        deleteListener = Realtime.EventCallback<io.insforge.realtime.models.SocketMessage> { message ->
+            message?.let { handleSocketMessage("DELETE", it) }
+        }
+        realtime.on("DELETE", deleteListener!!)
+    }
+
+    /**
+     * Handle incoming socket message and convert to PostgresAction
+     */
+    private fun handleSocketMessage(eventType: String, message: io.insforge.realtime.models.SocketMessage) {
+        // Check if this message is for our channel
+        val messageChannel = message.channel
+        if (messageChannel != null && !messageChannel.endsWith(topic)) {
+            return
+        }
+
+        val payload = message.payload
+
+        // Extract fields from payload
+        val schema = "public" // Default schema
+        val table = topic // Use topic as table name
+        val timestamp = payload["timestamp"]?.jsonPrimitive?.contentOrNull
+
+        val action = when (eventType) {
+            "INSERT" -> {
+                PostgresAction.Insert(schema, table, timestamp, payload)
+            }
+            "UPDATE" -> {
+                val oldRecord = payload["old_record"]?.jsonObject ?: JsonObject(emptyMap())
+                PostgresAction.Update(schema, table, timestamp, payload, oldRecord)
+            }
+            "DELETE" -> {
+                PostgresAction.Delete(schema, table, timestamp, payload)
+            }
+            else -> return
+        }
+
+        callbackManager.triggerPostgresChange(action)
+    }
+
+    /**
+     * Remove event listeners
+     */
+    private fun removeEventListeners() {
+        insertListener?.let { realtime.off("INSERT", it) }
+        updateListener?.let { realtime.off("UPDATE", it) }
+        deleteListener?.let { realtime.off("DELETE", it) }
+        insertListener = null
+        updateListener = null
+        deleteListener = null
     }
 
     override suspend fun unsubscribe() {
@@ -69,12 +141,11 @@ internal class InsforgeChannelImpl(
         _status.value = InsforgeChannel.Status.UNSUBSCRIBING
 
         try {
-            // Send leave message
-            realtime.sendChannelMessage(
-                topic = topic,
-                event = "phx_leave",
-                payload = buildJsonObject { }
-            )
+            // Remove event listeners
+            removeEventListeners()
+
+            // Use low-level unsubscribe API
+            realtime.unsubscribe(topic)
 
             // Unregister from realtime
             realtime.unregisterChannel(this)
@@ -352,6 +423,7 @@ internal class InsforgeChannelImpl(
      * Clean up resources
      */
     internal fun close() {
+        removeEventListeners()
         scope.cancel()
         callbackManager.clear()
     }

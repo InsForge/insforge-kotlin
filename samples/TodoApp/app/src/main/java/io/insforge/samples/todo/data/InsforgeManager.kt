@@ -82,7 +82,9 @@ object InsforgeManager {
             install(Database)
 
             // Install Realtime module for real-time subscriptions
-            install(Realtime)
+            install(Realtime) {
+                debug = true
+            }
         }
     }
 

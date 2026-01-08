@@ -5,7 +5,7 @@ import io.insforge.exceptions.InsforgeHttpException
 import io.insforge.storage.models.*
 import io.ktor.client.*
 import io.ktor.client.call.*
-import io.ktor.client.engine.cio.*
+import io.ktor.client.engine.okhttp.OkHttp
 import io.ktor.client.plugins.*
 import io.ktor.client.plugins.contentnegotiation.*
 import io.ktor.client.request.*
@@ -269,9 +269,14 @@ internal class BucketApiImpl(
      * A separate HTTP client for S3 uploads that does NOT include the Authorization header.
      * S3 presigned URLs include their own authentication via query parameters,
      * and sending a Bearer token causes "Unsupported Authorization Type" errors.
+     *
+     * Uses the same HTTP engine as the main client for platform compatibility.
      */
     private val s3HttpClient: HttpClient by lazy {
-        HttpClient(CIO) {
+        // Use same engine as main client, or default to OkHttp
+        val engine = insforgeClient.config.httpEngine ?: OkHttp.create()
+
+        HttpClient(engine) {
             install(ContentNegotiation) {
                 json(Json {
                     prettyPrint = true

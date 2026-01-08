@@ -99,8 +99,63 @@ internal class CallbackManager {
         }
         if (config.event != "*" && config.event != eventType) return false
 
-        // Filter is handled server-side, so we don't need to check here
+        // Apply client-side filter if specified
+        // Filter format: "column=operator.value" (e.g., "user_id=eq.123")
+        if (config.filter != null) {
+            val record = when (action) {
+                is PostgresAction.Insert -> action.record
+                is PostgresAction.Update -> action.record
+                is PostgresAction.Delete -> action.oldRecord
+            }
+            if (!matchesFilter(record, config.filter)) return false
+        }
+
         return true
+    }
+
+    /**
+     * Check if a record matches the filter expression.
+     * Supports filter format: "column=operator.value"
+     * Operators: eq, neq, gt, gte, lt, lte, in
+     */
+    private fun matchesFilter(record: kotlinx.serialization.json.JsonObject, filter: String): Boolean {
+        // Parse filter: "column=operator.value"
+        val eqIndex = filter.indexOf('=')
+        if (eqIndex == -1) return true // Invalid filter, pass through
+
+        val column = filter.substring(0, eqIndex)
+        val rest = filter.substring(eqIndex + 1)
+
+        // Parse operator and value: "operator.value"
+        val dotIndex = rest.indexOf('.')
+        if (dotIndex == -1) return true // Invalid filter, pass through
+
+        val operator = rest.substring(0, dotIndex)
+        val filterValue = rest.substring(dotIndex + 1)
+
+        // Get the column value from record
+        val recordValue = record[column]?.let { element ->
+            when {
+                element is kotlinx.serialization.json.JsonPrimitive -> element.content
+                else -> element.toString().removeSurrounding("\"")
+            }
+        } ?: return false // Column not found, doesn't match
+
+        // Apply operator
+        return when (operator) {
+            "eq" -> recordValue == filterValue
+            "neq" -> recordValue != filterValue
+            "gt" -> recordValue.toDoubleOrNull()?.let { it > filterValue.toDouble() } ?: false
+            "gte" -> recordValue.toDoubleOrNull()?.let { it >= filterValue.toDouble() } ?: false
+            "lt" -> recordValue.toDoubleOrNull()?.let { it < filterValue.toDouble() } ?: false
+            "lte" -> recordValue.toDoubleOrNull()?.let { it <= filterValue.toDouble() } ?: false
+            "in" -> {
+                // Format: "in.(val1,val2,val3)"
+                val values = filterValue.removeSurrounding("(", ")").split(",")
+                recordValue in values
+            }
+            else -> true // Unknown operator, pass through
+        }
     }
 
     // ============ Presence Callbacks ============

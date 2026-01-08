@@ -1,6 +1,19 @@
 package io.insforge.realtime
 
+import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
+
+/**
+ * Default JSON configuration for decoding records.
+ * Configured to ignore unknown keys since realtime payloads may contain
+ * additional metadata fields (e.g., "operation", "meta") that are not
+ * part of the user's data model.
+ */
+@PublishedApi
+internal val realtimeJson = Json {
+    ignoreUnknownKeys = true
+    isLenient = true
+}
 
 /**
  * Represents a Postgres database change event.
@@ -81,7 +94,7 @@ sealed interface PostgresAction {
  * ```
  */
 inline fun <reified T> PostgresAction.Insert.decodeRecord(): T {
-    return kotlinx.serialization.json.Json.decodeFromJsonElement(
+    return realtimeJson.decodeFromJsonElement(
         kotlinx.serialization.serializer<T>(),
         record
     )
@@ -91,7 +104,7 @@ inline fun <reified T> PostgresAction.Insert.decodeRecord(): T {
  * Decode the record to a specific type for UPDATE action.
  */
 inline fun <reified T> PostgresAction.Update.decodeRecord(): T {
-    return kotlinx.serialization.json.Json.decodeFromJsonElement(
+    return realtimeJson.decodeFromJsonElement(
         kotlinx.serialization.serializer<T>(),
         record
     )
@@ -101,7 +114,7 @@ inline fun <reified T> PostgresAction.Update.decodeRecord(): T {
  * Decode the old record to a specific type for UPDATE action.
  */
 inline fun <reified T> PostgresAction.Update.decodeOldRecord(): T {
-    return kotlinx.serialization.json.Json.decodeFromJsonElement(
+    return realtimeJson.decodeFromJsonElement(
         kotlinx.serialization.serializer<T>(),
         oldRecord
     )
@@ -111,7 +124,7 @@ inline fun <reified T> PostgresAction.Update.decodeOldRecord(): T {
  * Decode the old record to a specific type for DELETE action.
  */
 inline fun <reified T> PostgresAction.Delete.decodeOldRecord(): T {
-    return kotlinx.serialization.json.Json.decodeFromJsonElement(
+    return realtimeJson.decodeFromJsonElement(
         kotlinx.serialization.serializer<T>(),
         oldRecord
     )

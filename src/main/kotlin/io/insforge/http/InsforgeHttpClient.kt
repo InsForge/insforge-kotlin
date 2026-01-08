@@ -3,7 +3,7 @@ package io.insforge.http
 import io.insforge.InsforgeClient
 import io.insforge.InsforgeVersion
 import io.ktor.client.*
-import io.ktor.client.engine.cio.*
+import io.ktor.client.engine.okhttp.OkHttp
 import io.ktor.client.plugins.*
 import io.ktor.client.plugins.contentnegotiation.*
 import io.ktor.client.plugins.logging.*
@@ -21,7 +21,10 @@ object InsforgeHttpClient {
     fun create(insforgeClient: InsforgeClient): HttpClient {
         val config = insforgeClient.config
 
-        return HttpClient(config.httpEngine ?: CIO.create()) {
+        // Use OkHttp as default engine - works on both JVM and Android
+        val engine = config.httpEngine ?: OkHttp.create()
+
+        return HttpClient(engine) {
             // Content negotiation with JSON
             install(ContentNegotiation) {
                 json(Json {

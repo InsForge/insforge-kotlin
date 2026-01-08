@@ -22,7 +22,7 @@ android {
 
         // InsForge Configuration - Replace with your own values
         buildConfigField("String", "INSFORGE_URL", "\"https://pg6afqz9.us-east.insforge.app\"")
-        buildConfigField("String", "INSFORGE_ANON_KEY", "\"your_anon_key\"")
+        buildConfigField("String", "INSFORGE_ANON_KEY", "\"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3OC0xMjM0LTU2NzgtOTBhYi1jZGVmMTIzNDU2NzgiLCJlbWFpbCI6ImFub25AaW5zZm9yZ2UuY29tIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Njc5MDc5MzJ9.K0semVtcacV55qeEhVUI3WKWzT7p87JU7wNzdXysRWo\"")
     }
 
     buildTypes {
@@ -70,8 +70,10 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.6.2")
 
     // Ktor (required by InsForge SDK)
+    // Note: Use ktor-client-okhttp on Android instead of ktor-client-cio
+    // CIO has DNS resolution issues on Android
     implementation("io.ktor:ktor-client-core:2.3.7")
-    implementation("io.ktor:ktor-client-cio:2.3.7")
+    implementation("io.ktor:ktor-client-okhttp:2.3.7")  // Use OkHttp engine for Android
     implementation("io.ktor:ktor-client-content-negotiation:2.3.7")
     implementation("io.ktor:ktor-serialization-kotlinx-json:2.3.7")
     implementation("io.ktor:ktor-client-logging:2.3.7")

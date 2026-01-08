@@ -13,7 +13,7 @@ import io.ktor.client.plugins.logging.LogLevel
  */
 object TestConfig {
     const val BASE_URL = "https://pg6afqz9.us-east.insforge.app"
-    const val ANON_KEY = "ik_ca177fcf1e2e72e8d1e0c2c23dbe3b79"
+    const val ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3OC0xMjM0LTU2NzgtOTBhYi1jZGVmMTIzNDU2NzgiLCJlbWFpbCI6ImFub25AaW5zZm9yZ2UuY29tIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Njc5MDc5MzJ9.K0semVtcacV55qeEhVUI3WKWzT7p87JU7wNzdXysRWo"
 
     /**
      * Create a fully configured test client with all plugins installed

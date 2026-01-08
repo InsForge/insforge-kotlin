@@ -1,7 +1,7 @@
 package io.insforge
 
 import io.ktor.client.*
-import io.ktor.client.engine.cio.*
+import io.ktor.client.engine.okhttp.OkHttp
 import io.ktor.client.request.*
 import io.ktor.client.statement.*
 import io.ktor.http.*
@@ -16,7 +16,7 @@ class CaptureApiResponsesTest {
     private val baseURL = "https://pg6afqz9.us-east.insforge.app"
     private val anonKey = "ik_ca177fcf1e2e72e8d1e0c2c23dbe3b79"
 
-    private val httpClient = HttpClient(CIO) {
+    private val httpClient = HttpClient(OkHttp) {
         expectSuccess = false
     }
 

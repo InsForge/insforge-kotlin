@@ -42,7 +42,7 @@ class TodoViewModel : ViewModel() {
 
     companion object {
         private const val TAG = "TodoViewModel"
-        private const val CHANNEL_NAME = "todos-sync"
+        private const val CHANNEL_NAME = "todos"
     }
 
     /**
