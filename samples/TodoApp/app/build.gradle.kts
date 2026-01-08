@@ -22,7 +22,7 @@ android {
 
         // InsForge Configuration - Replace with your own values
         buildConfigField("String", "INSFORGE_URL", "\"https://pg6afqz9.us-east.insforge.app\"")
-        buildConfigField("String", "INSFORGE_ANON_KEY", "\"yourownkeyhere\"")
+        buildConfigField("String", "INSFORGE_ANON_KEY", "\"your_anon_key\"")
     }
 
     buildTypes {
@@ -76,6 +76,9 @@ dependencies {
     implementation("io.ktor:ktor-serialization-kotlinx-json:2.3.7")
     implementation("io.ktor:ktor-client-logging:2.3.7")
     implementation("io.ktor:ktor-client-websockets:2.3.7")
+
+    // Socket.IO client for Realtime (InsForge uses Socket.IO, not raw WebSocket)
+    implementation("io.socket:socket.io-client:2.1.1")
 
     // AndroidX Core
     implementation("androidx.core:core-ktx:1.12.0")

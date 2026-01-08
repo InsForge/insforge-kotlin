@@ -257,6 +257,19 @@ class Realtime internal constructor(
                             handleIncomingEvent("realtime:message", args)
                         }
 
+                        // Catch-all listener for all incoming events
+                        // This mirrors the TypeScript SDK's socket.onAny() behavior
+                        onAnyIncoming { args ->
+                            // args[0] is the event name, args[1:] are the actual arguments
+                            if (args.isNotEmpty()) {
+                                val eventName = args[0] as? String ?: return@onAnyIncoming
+                                // Skip already handled events
+                                if (eventName == "realtime:error") return@onAnyIncoming
+                                val eventArgs = if (args.size > 1) args.sliceArray(1 until args.size) else emptyArray()
+                                handleIncomingEvent(eventName, eventArgs)
+                            }
+                        }
+
                         // Connect
                         connect()
                     }

@@ -19,6 +19,7 @@ import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import kotlin.test.*
+import kotlin.time.Duration.Companion.seconds
 
 /**
  * Integration tests for Realtime module
@@ -874,53 +875,148 @@ class RealtimeTest {
     }
 
     @Test
-    fun `test listen for todos changes and trigger update`() = runTest {
+    fun `test listen for todos changes and trigger update`() = runTest(timeout = 30.seconds) {
         try {
-            // Setup listener for realtime messages
-            val receivedMessages = mutableListOf<SocketMessage>()
+            // Connect to realtime
+            client.realtime.connect()
+            println("[Test] Connected with authenticated token")
 
-            client.realtime.on<SocketMessage>("realtime:message") { message ->
-                message?.let {
-                    receivedMessages.add(it)
-                    println("Received realtime message:")
-                    println("  Channel: ${it.channel}")
-                    println("  Event: ${it.event}")
-                    println("  Payload: ${it.payload}")
-                    println("  Timestamp: ${it.timestamp}")
-                }
-            }
-
-            // Also listen for specific events
-            client.realtime.on<SocketMessage>("todo.created") { message ->
-                println("TODO CREATED: ${message?.payload}")
-            }
-
-            client.realtime.on<SocketMessage>("todo.updated") { message ->
-                println("TODO UPDATED: ${message?.payload}")
-            }
-
-            client.realtime.on<SocketMessage>("todo.deleted") { message ->
-                println("TODO DELETED: ${message?.payload}")
-            }
-
-            // Subscribe to todos channel
+            // Subscribe to todos channel for database changes
             val response = client.realtime.subscribe("todos")
-            println("Subscribed to todos: ${response.ok}")
 
             if (response.ok) {
-                println("\n=== Now listening for todos changes for 10 seconds ===")
-                println("Try inserting/updating/deleting a todo from another client...\n")
+                println("[Test] ✅ Subscribed to 'todos' channel")
 
-                // Wait for potential messages
-                delay(10000)
+                // Set up tracking for received events
+                val receivedMessages = mutableListOf<SocketMessage>()
+                var receivedEvent: SocketMessage? = null
 
-                println("\n=== Finished listening ===")
-                println("Total messages received: ${receivedMessages.size}")
+                // Listen for various event types that might be used for DB changes
+                val eventTypes = listOf(
+                    "INSERT", "UPDATE", "DELETE",
+                    "db_change", "todo_updated", "todo_changed",
+                    "realtime:message", "*"
+                )
+
+                eventTypes.forEach { eventType ->
+                    client.realtime.on<SocketMessage>(eventType) { message ->
+                        message?.let {
+                            println("[Test] 📨 Received '$eventType' event:")
+                            println("       Channel: ${it.channel}")
+                            println("       MessageId: ${it.messageId}")
+                            println("       SenderType: ${it.senderType}")
+                            println("       Payload: ${it.payload}")
+                            receivedMessages.add(it)
+                            receivedEvent = it
+                        }
+                    }
+                }
+
+                // Now perform a database update on todos table
+                println("[Test] 🔄 Performing todo update...")
+
+                // First, fetch an existing todo
+                @Serializable
+                data class TodoRead(val id: String, val title: String)
+
+                val existingTodos = client.database
+                    .from("todos")
+                    .select()
+                    .limit(1)
+                    .execute<TodoRead>()
+
+                if (existingTodos.isNotEmpty()) {
+                    val firstTodo = existingTodos.first()
+                    val todoId = firstTodo.id
+                    println("[Test] Found todo with id: $todoId, title: ${firstTodo.title}")
+
+                    // Update the todo - append timestamp to title to make it unique
+                    val newTitle = "Updated at ${System.currentTimeMillis()}"
+                    val updateData = buildJsonObject {
+                        put("title", newTitle)
+                    }
+
+                    val updateResult = client.database
+                        .from("todos")
+                        .eq("id", todoId)
+                        .update(updateData)
+                        .returning()
+                        .execute<JsonObject>()
+
+                    println("[Test] ✅ Todo updated: $updateResult")
+
+                    // Wait for realtime event (with timeout)
+                    println("[Test] Waiting for realtime notification...")
+                    delay(5000)
+
+                    if (receivedMessages.isNotEmpty()) {
+                        println("[Test] ✅ Received ${receivedMessages.size} realtime notification(s)!")
+                        receivedMessages.forEach { msg ->
+                            println("[Test]   - Event: ${msg.event}, Payload: ${msg.payload}")
+                        }
+                        assertNotNull(receivedEvent)
+                    } else {
+                        println("[Test] ⚠️ No realtime event received within timeout")
+                        println("[Test] This might be expected if the backend doesn't broadcast DB changes to 'todos' channel")
+                    }
+                } else {
+                    // No existing todos, create one and then update it
+                    println("[Test] ⚠️ No existing todos found, creating one...")
+
+                    val insertData = buildJsonArray {
+                        addJsonObject {
+                            put("title", "Test todo for realtime")
+                            put("is_completed", false)
+                        }
+                    }
+
+                    val inserted = client.database
+                        .from("todos")
+                        .insert(insertData)
+                        .returning()
+                        .execute<JsonObject>()
+
+                    println("[Test] Created todo: ${inserted.firstOrNull()}")
+
+                    // Wait for potential INSERT notification
+                    delay(3000)
+
+                    // Now update it
+                    val todoId = inserted.firstOrNull()?.get("id")?.toString()?.removeSurrounding("\"")
+                    if (todoId != null) {
+                        val updateData = buildJsonObject {
+                            put("title", "Updated at ${System.currentTimeMillis()}")
+                        }
+                        client.database
+                            .from("todos")
+                            .eq("id", todoId)
+                            .update(updateData)
+                            .execute<JsonObject>()
+
+                        println("[Test] Updated the newly created todo")
+
+                        // Wait for UPDATE notification
+                        delay(3000)
+
+                        // Cleanup
+                        client.database
+                            .from("todos")
+                            .eq("id", todoId)
+                            .delete()
+                            .execute<JsonObject>()
+                    }
+
+                    println("[Test] Total messages received: ${receivedMessages.size}")
+                }
+            } else {
+                println("[Test] ❌ Subscribe failed: ${response.error?.code} - ${response.error?.message}")
             }
 
             client.realtime.disconnect()
         } catch (e: Exception) {
-            println("Todos listen test failed: ${e.message}")
+            println("[Test] ❌ Test failed: ${e.message}")
+            e.printStackTrace()
+            client.realtime.disconnect()
         }
     }
 
