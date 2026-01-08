@@ -14,7 +14,7 @@ import kotlin.test.Test
 class CaptureApiResponsesTest {
 
     private val baseURL = "https://pg6afqz9.us-east.insforge.app"
-    private val anonKey = "ik_ca177fcf1e2e72e8d1e0c2c23dbe3b79"
+    private val anonKey = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3OC0xMjM0LTU2NzgtOTBhYi1jZGVmMTIzNDU2NzgiLCJlbWFpbCI6ImFub25AaW5zZm9yZ2UuY29tIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Njc5MDc5MzJ9.K0semVtcacV55qeEhVUI3WKWzT7p87JU7wNzdXysRWo"
 
     private val httpClient = HttpClient(OkHttp) {
         expectSuccess = false
