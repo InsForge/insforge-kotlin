@@ -125,7 +125,27 @@ object TestConfig {
             accessToken = { TEST_JWT_TOKEN }
             // Realtime needs Database for the todos tests
             install(Database)
-            install(Realtime)
+            install(Realtime) {
+                debug = true  // Enable WebSocket message logging
+            }
+        }
+    }
+
+    /**
+     * Create a test client with JWT token and debug logging enabled for realtime testing
+     */
+    fun createAuthenticatedRealtimeClientWithDebug(): InsforgeClient {
+        return createInsforgeClient(
+            baseURL = BASE_URL,
+            anonKey = ANON_KEY
+        ) {
+            // Use JWT token for authentication
+            accessToken = { TEST_JWT_TOKEN }
+            // Realtime needs Database for the todos tests
+            install(Database)
+            install(Realtime) {
+                debug = true  // Enable WebSocket message logging
+            }
         }
     }
 }

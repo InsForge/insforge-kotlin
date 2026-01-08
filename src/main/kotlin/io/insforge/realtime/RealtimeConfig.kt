@@ -23,4 +23,10 @@ class RealtimeConfig {
      * Ping interval to keep connection alive (milliseconds)
      */
     var pingInterval: Long = 30000
+
+    /**
+     * Enable debug logging for WebSocket messages.
+     * When true, all outgoing and incoming Socket.IO messages will be logged.
+     */
+    var debug: Boolean = false
 }

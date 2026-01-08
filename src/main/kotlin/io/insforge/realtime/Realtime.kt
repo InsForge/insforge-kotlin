@@ -91,6 +91,38 @@ class Realtime internal constructor(
         isLenient = true
     }
 
+    // Debug logging prefix
+    private val logTag = "[InsForge Realtime]"
+
+    /**
+     * Log a debug message if debug mode is enabled
+     */
+    private fun logDebug(message: String) {
+        if (config.debug) {
+            println("$logTag [DEBUG] $message")
+        }
+    }
+
+    /**
+     * Log an outgoing message
+     */
+    private fun logOutgoing(event: String, data: Any?) {
+        if (config.debug) {
+            println("$logTag [>>>] SEND: event='$event'")
+            data?.let { println("$logTag [>>>]   data: $it") }
+        }
+    }
+
+    /**
+     * Log an incoming message
+     */
+    private fun logIncoming(event: String, data: Any?) {
+        if (config.debug) {
+            println("$logTag [<<<] RECV: event='$event'")
+            data?.let { println("$logTag [<<<]   data: $it") }
+        }
+    }
+
     companion object : InsforgePluginProvider<RealtimeConfig, Realtime> {
         override val key: String = "realtime"
         private const val CONNECT_TIMEOUT_MS = 10000L
@@ -158,6 +190,9 @@ class Realtime internal constructor(
                     // Get auth token
                     val token = client.getCurrentAccessToken() ?: client.anonKey
 
+                    logDebug("Connecting to ${client.baseURL}")
+                    logDebug("Auth token: ${if (token.isNotEmpty()) "${token.take(20)}..." else "(none)"}")
+
                     // Configure Socket.IO options
                     val options = IO.Options().apply {
                         // Transport - prefer websocket
@@ -174,6 +209,8 @@ class Realtime internal constructor(
                         // Timeout
                         timeout = CONNECT_TIMEOUT_MS
                     }
+
+                    logDebug("Socket.IO options: transports=${options.transports.toList()}, reconnection=${options.reconnection}")
 
                     // Create socket connection to base URL
                     socket = IO.socket(client.baseURL, options)
@@ -200,13 +237,16 @@ class Realtime internal constructor(
                         on(Socket.EVENT_CONNECT) {
                             timeoutJob.cancel()
                             _connectionState.value = ConnectionState.Connected
-                            println("[InsForge Realtime] Connected to Socket.IO server")
+                            println("$logTag Connected to Socket.IO server")
+                            logDebug("Socket ID: ${id()}")
 
                             // Re-subscribe to channels on every connect (initial + reconnects)
                             for (channel in subscribedChannels) {
-                                emit("realtime:subscribe", JSONObject().apply {
+                                val subscribeData = JSONObject().apply {
                                     put("channel", channel)
-                                })
+                                }
+                                logOutgoing("realtime:subscribe", subscribeData)
+                                emit("realtime:subscribe", subscribeData)
                             }
 
                             notifyListeners("connect", null)
@@ -223,7 +263,8 @@ class Realtime internal constructor(
                             timeoutJob.cancel()
                             val error = args.firstOrNull()?.toString() ?: "Unknown error"
                             _connectionState.value = ConnectionState.Error(error)
-                            println("[InsForge Realtime] Connection error: $error")
+                            println("$logTag Connection error: $error")
+                            logDebug("Connection error details: ${args.toList()}")
 
                             notifyListeners("connect_error", error)
 
@@ -238,22 +279,25 @@ class Realtime internal constructor(
                         on(Socket.EVENT_DISCONNECT) { args ->
                             _connectionState.value = ConnectionState.Disconnected
                             val reason = args.firstOrNull()?.toString() ?: "unknown"
-                            println("[InsForge Realtime] Disconnected: $reason")
+                            println("$logTag Disconnected: $reason")
+                            logDebug("Disconnect reason: $reason")
                             notifyListeners("disconnect", reason)
                         }
 
                         on("realtime:error") { args ->
+                            logIncoming("realtime:error", args.firstOrNull())
                             val data = args.firstOrNull() as? JSONObject
                             val error = RealtimeError(
                                 code = data?.optString("code") ?: "UNKNOWN",
                                 message = data?.optString("message") ?: "Unknown error"
                             )
-                            println("[InsForge Realtime] Error: ${error.message}")
+                            println("$logTag Error: ${error.message}")
                             notifyListeners("error", error)
                         }
 
                         // Listen for incoming realtime messages
                         on("realtime:message") { args ->
+                            logIncoming("realtime:message", args.firstOrNull())
                             handleIncomingEvent("realtime:message", args)
                         }
 
@@ -266,11 +310,13 @@ class Realtime internal constructor(
                                 // Skip already handled events
                                 if (eventName == "realtime:error") return@onAnyIncoming
                                 val eventArgs = if (args.size > 1) args.sliceArray(1 until args.size) else emptyArray()
+                                logIncoming(eventName, eventArgs.firstOrNull())
                                 handleIncomingEvent(eventName, eventArgs)
                             }
                         }
 
                         // Connect
+                        logDebug("Initiating socket connection...")
                         connect()
                     }
 
@@ -308,16 +354,21 @@ class Realtime internal constructor(
      * @return SubscribeResponse indicating success or failure
      */
     suspend fun subscribe(channel: String): SubscribeResponse {
+        logDebug("subscribe() called for channel: $channel")
+
         // Already subscribed, return success
         if (subscribedChannels.contains(channel)) {
+            logDebug("Already subscribed to '$channel', returning cached success")
             return SubscribeResponse(ok = true, channel = channel)
         }
 
         // Auto-connect if not connected
         if (socket?.connected() != true) {
+            logDebug("Not connected, initiating connection...")
             try {
                 connect()
             } catch (e: Exception) {
+                logDebug("Connection failed: ${e.message}")
                 return SubscribeResponse(
                     ok = false,
                     channel = channel,
@@ -327,14 +378,22 @@ class Realtime internal constructor(
         }
 
         return suspendCancellableCoroutine { continuation ->
-            socket?.emit("realtime:subscribe", arrayOf(JSONObject().apply {
+            val subscribeData = JSONObject().apply {
                 put("channel", channel)
-            })) { args ->
+            }
+            logOutgoing("realtime:subscribe", subscribeData)
+
+            socket?.emit("realtime:subscribe", arrayOf(subscribeData)) { args ->
                 val response = args.firstOrNull() as? JSONObject
+                logIncoming("realtime:subscribe (ack)", response)
+
                 val ok = response?.optBoolean("ok", false) ?: false
 
                 if (ok) {
                     subscribedChannels.add(channel)
+                    logDebug("Successfully subscribed to '$channel'")
+                } else {
+                    logDebug("Subscribe to '$channel' failed")
                 }
 
                 val result = SubscribeResponse(
@@ -362,12 +421,17 @@ class Realtime internal constructor(
      * @param channel Channel name to unsubscribe from
      */
     fun unsubscribe(channel: String) {
+        logDebug("unsubscribe() called for channel: $channel")
         subscribedChannels.remove(channel)
 
         if (socket?.connected() == true) {
-            socket?.emit("realtime:unsubscribe", JSONObject().apply {
+            val unsubscribeData = JSONObject().apply {
                 put("channel", channel)
-            })
+            }
+            logOutgoing("realtime:unsubscribe", unsubscribeData)
+            socket?.emit("realtime:unsubscribe", unsubscribeData)
+        } else {
+            logDebug("Not connected, skipping unsubscribe emit")
         }
     }
 
@@ -391,15 +455,20 @@ class Realtime internal constructor(
      * @throws IllegalStateException if not connected
      */
     fun publish(channel: String, event: String, payload: Map<String, Any>) {
+        logDebug("publish() called: channel='$channel', event='$event'")
+
         if (socket?.connected() != true) {
+            logDebug("Publish failed: not connected")
             throw IllegalStateException("Not connected to realtime server. Call connect() first.")
         }
 
-        socket?.emit("realtime:publish", JSONObject().apply {
+        val publishData = JSONObject().apply {
             put("channel", channel)
             put("event", event)
             put("payload", JSONObject(payload))
-        })
+        }
+        logOutgoing("realtime:publish", publishData)
+        socket?.emit("realtime:publish", publishData)
     }
 
     // ============ Event Listeners ============
