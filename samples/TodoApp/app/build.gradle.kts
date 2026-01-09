@@ -5,11 +5,11 @@ plugins {
 }
 
 android {
-    namespace = "io.insforge.samples.todo"
+    namespace = "dev.insforge.samples.todo"
     compileSdk = 34
 
     defaultConfig {
-        applicationId = "io.insforge.samples.todo"
+        applicationId = "dev.insforge.samples.todo"
         minSdk = 24
         targetSdk = 34
         versionCode = 1

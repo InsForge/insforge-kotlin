@@ -4,7 +4,7 @@ plugins {
     `maven-publish`
 }
 
-group = "io.insforge"
+group = "dev.insforge"
 version = "0.1.0-SNAPSHOT"
 
 repositories {
@@ -60,7 +60,7 @@ val generateVersionFile by tasks.registering {
         versionFile.parentFile.mkdirs()
         versionFile.writeText(
             """
-            |package io.insforge
+            |package dev.insforge
             |
             |/**
             | * SDK version information (auto-generated from build.gradle.kts)

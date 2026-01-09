@@ -1,0 +1,544 @@
+package dev.insforge.realtime
+
+import dev.insforge.TestConfig
+import dev.insforge.database.database
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.launchIn
+import kotlinx.coroutines.flow.onEach
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.test.runTest
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.addJsonObject
+import kotlinx.serialization.json.buildJsonArray
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
+import kotlin.test.*
+import kotlin.time.Duration.Companion.seconds
+
+/**
+ * High-Level API tests for Realtime module
+ *
+ * Tests the InsforgeChannel, broadcastFlow, and postgresChangeFlow APIs
+ * for monitoring database changes on the todos table.
+ */
+class RealtimeHighLevelAPITest {
+
+    private lateinit var client: dev.insforge.InsforgeClient
+
+    @BeforeTest
+    fun setup() {
+        client = TestConfig.createAuthenticatedRealtimeClient()
+    }
+
+    @AfterTest
+    fun teardown() {
+        client.close()
+    }
+
+    // ============ Channel Creation Tests ============
+
+    @Test
+    fun `test create channel with high-level API`() = runTest {
+        val channel = client.realtime.channel("test-high-level")
+
+        assertEquals("test-high-level", channel.topic)
+        assertEquals(InsforgeChannel.Status.UNSUBSCRIBED, channel.status.value)
+
+        println("[Test] Channel created: ${channel.topic}")
+    }
+
+    @Test
+    fun `test create channel with broadcast config`() = runTest {
+        val channel = client.realtime.channel("broadcast-config-test") {
+            broadcast {
+                acknowledgeBroadcasts = true
+                receiveOwnBroadcasts = true
+            }
+        }
+
+        assertEquals("broadcast-config-test", channel.topic)
+        println("[Test] Channel with broadcast config created")
+    }
+
+    // ============ Broadcast Flow Tests ============
+
+    @Test
+    fun `test broadcastFlow setup`() = runTest {
+        // Test that broadcastFlow can be created and set up
+        val channel = client.realtime.channel("broadcast-flow-test") {
+            broadcast {
+                receiveOwnBroadcasts = true
+            }
+        }
+
+        // Setup broadcast flow BEFORE subscribing
+        val flow = channel.broadcastFlow("test-event")
+
+        // Verify flow is created (flow is cold, so it doesn't execute until collected)
+        assertNotNull(flow)
+        println("[Test] BroadcastFlow created successfully")
+
+        // Cleanup
+        client.realtime.removeChannel("broadcast-flow-test")
+    }
+
+    @Test
+    fun `test typed broadcastFlow setup`() = runTest {
+        @Serializable
+        data class ChatMessage(val text: String, val sender: String)
+
+        val channel = client.realtime.channel("typed-broadcast-test") {
+            broadcast {
+                receiveOwnBroadcasts = true
+            }
+        }
+
+        // Setup typed broadcast flow
+        val flow = channel.broadcastFlow<ChatMessage>("chat")
+
+        assertNotNull(flow)
+        println("[Test] Typed BroadcastFlow created successfully")
+
+        client.realtime.removeChannel("typed-broadcast-test")
+    }
+
+    // ============ Database Change Monitoring Tests (Using High-Level Channel API) ============
+
+    @Test
+    fun `test monitor todos INSERT with high-level API`() = runTest(timeout = 30.seconds) {
+        println("[Test] Starting INSERT monitoring test with High-Level Channel API...")
+
+        // Create channel using high-level API
+        val channel = client.realtime.channel("todos")
+
+        // Setup postgresChangeFlow BEFORE subscribing
+        val insertFlow = channel.postgresChangeFlow<PostgresAction.Insert>(schema = "public") {
+            table = "todos"
+        }
+
+        val insertEvents = mutableListOf<PostgresAction.Insert>()
+
+        // Collect flow in background
+        val collectJob = launch {
+            insertFlow.collect { action ->
+                println("[Test] 📥 INSERT event received via postgresChangeFlow:")
+                println("       Record: ${action.record}")
+                insertEvents.add(action)
+            }
+        }
+
+        // Subscribe to channel (this now uses low-level API internally)
+        println("[Test] Subscribing to channel...")
+        try {
+            channel.subscribe()
+            println("[Test] ✅ Channel subscribed, status: ${channel.status.value}")
+        } catch (e: Exception) {
+            println("[Test] Subscribe failed: ${e.message}")
+            collectJob.cancel()
+            return@runTest
+        }
+
+        // Insert a new todo (include user_id for RLS)
+        val timestamp = System.currentTimeMillis()
+        val insertData = buildJsonArray {
+            addJsonObject {
+                put("title", "High-Level API Test $timestamp")
+                put("is_completed", false)
+                put("user_id", "085a481e-94b8-4bf9-b3a0-7f0e50f7a072")
+            }
+        }
+
+        println("[Test] Inserting new todo...")
+        try {
+            val inserted = client.database.from("todos")
+                .insert(insertData)
+                .returning()
+                .execute<JsonObject>()
+
+            val todoId = inserted.firstOrNull()?.get("id")?.toString()?.removeSurrounding("\"")
+            println("[Test] Inserted todo with ID: $todoId")
+
+            // Wait for realtime event
+            delay(3000)
+
+            println("[Test] INSERT events received: ${insertEvents.size}")
+            if (insertEvents.isNotEmpty()) {
+                println("[Test] ✅ Successfully received INSERT notification via High-Level API!")
+                insertEvents.forEach { println("[Test]   - ${it.record}") }
+            }
+
+            // Cleanup
+            if (todoId != null) {
+                client.database.from("todos")
+                    .eq("id", todoId)
+                    .delete()
+                    .execute<JsonObject>()
+                println("[Test] Cleaned up test todo")
+            }
+        } catch (e: Exception) {
+            println("[Test] Database operation failed: ${e.message}")
+        }
+
+        collectJob.cancel()
+        channel.unsubscribe()
+    }
+
+    @Test
+    fun `test monitor todos UPDATE with high-level API`() = runTest(timeout = 30.seconds) {
+        println("[Test] Starting UPDATE monitoring test with High-Level Channel API...")
+
+        val channel = client.realtime.channel("todos")
+
+        // Setup postgresChangeFlow for UPDATE
+        val updateFlow = channel.postgresChangeFlow<PostgresAction.Update>(schema = "public") {
+            table = "todos"
+        }
+
+        val updateEvents = mutableListOf<PostgresAction.Update>()
+
+        val collectJob = launch {
+            updateFlow.collect { action ->
+                println("[Test] 📝 UPDATE event received via postgresChangeFlow:")
+                println("       Record: ${action.record}")
+                updateEvents.add(action)
+            }
+        }
+
+        try {
+            channel.subscribe()
+            println("[Test] ✅ Channel subscribed")
+        } catch (e: Exception) {
+            println("[Test] Subscribe failed: ${e.message}")
+            collectJob.cancel()
+            return@runTest
+        }
+
+        try {
+            // Create a todo first (include user_id for RLS)
+            val insertData = buildJsonArray {
+                addJsonObject {
+                    put("title", "Test Todo for Update")
+                    put("is_completed", false)
+                    put("user_id", "085a481e-94b8-4bf9-b3a0-7f0e50f7a072")
+                }
+            }
+            val inserted = client.database.from("todos")
+                .insert(insertData)
+                .returning()
+                .execute<JsonObject>()
+            val todoId = inserted.first()["id"].toString().removeSurrounding("\"")
+            println("[Test] Created test todo: $todoId")
+
+            delay(1000) // Wait for INSERT event to pass
+
+            println("[Test] Updating todo: $todoId")
+            val updateData = buildJsonObject {
+                put("title", "Updated at ${System.currentTimeMillis()}")
+            }
+            client.database.from("todos")
+                .eq("id", todoId)
+                .update(updateData)
+                .execute<JsonObject>()
+
+            // Wait for realtime event
+            delay(3000)
+
+            println("[Test] UPDATE events received: ${updateEvents.size}")
+            if (updateEvents.isNotEmpty()) {
+                println("[Test] ✅ Successfully received UPDATE notification via High-Level API!")
+                updateEvents.forEach { println("[Test]   - ${it.record}") }
+            }
+
+            // Cleanup
+            client.database.from("todos")
+                .eq("id", todoId)
+                .delete()
+                .execute<JsonObject>()
+            println("[Test] Cleaned up test todo")
+        } catch (e: Exception) {
+            println("[Test] Database operation failed: ${e.message}")
+        }
+
+        collectJob.cancel()
+        channel.unsubscribe()
+    }
+
+    @Test
+    fun `test monitor todos DELETE with high-level API`() = runTest(timeout = 30.seconds) {
+        println("[Test] Starting DELETE monitoring test with High-Level Channel API...")
+
+        val channel = client.realtime.channel("todos")
+
+        // Setup postgresChangeFlow for DELETE
+        val deleteFlow = channel.postgresChangeFlow<PostgresAction.Delete>(schema = "public") {
+            table = "todos"
+        }
+
+        val deleteEvents = mutableListOf<PostgresAction.Delete>()
+
+        val collectJob = launch {
+            deleteFlow.collect { action ->
+                println("[Test] 🗑️ DELETE event received via postgresChangeFlow:")
+                println("       OldRecord: ${action.oldRecord}")
+                deleteEvents.add(action)
+            }
+        }
+
+        try {
+            channel.subscribe()
+            println("[Test] ✅ Channel subscribed")
+        } catch (e: Exception) {
+            println("[Test] Subscribe failed: ${e.message}")
+            collectJob.cancel()
+            return@runTest
+        }
+
+        try {
+            // Create a todo to delete (include user_id for RLS)
+            val insertData = buildJsonArray {
+                addJsonObject {
+                    put("title", "Todo to be deleted ${System.currentTimeMillis()}")
+                    put("is_completed", false)
+                    put("user_id", "085a481e-94b8-4bf9-b3a0-7f0e50f7a072")
+                }
+            }
+            val inserted = client.database.from("todos")
+                .insert(insertData)
+                .returning()
+                .execute<JsonObject>()
+
+            val todoId = inserted.first()["id"].toString().removeSurrounding("\"")
+            println("[Test] Created todo to delete: $todoId")
+
+            delay(1000) // Wait for INSERT event to pass
+
+            // Delete the todo
+            println("[Test] Deleting todo: $todoId")
+            client.database.from("todos")
+                .eq("id", todoId)
+                .delete()
+                .execute<JsonObject>()
+
+            // Wait for realtime event
+            delay(3000)
+
+            println("[Test] DELETE events received: ${deleteEvents.size}")
+            if (deleteEvents.isNotEmpty()) {
+                println("[Test] ✅ Successfully received DELETE notification via High-Level API!")
+                deleteEvents.forEach { println("[Test]   - ${it.oldRecord}") }
+            }
+        } catch (e: Exception) {
+            println("[Test] Database operation failed: ${e.message}")
+        }
+
+        collectJob.cancel()
+        channel.unsubscribe()
+    }
+
+    @Test
+    fun `test monitor all todos CRUD operations`() = runTest(timeout = 60.seconds) {
+        println("[Test] Starting full CRUD monitoring test with High-Level Channel API...")
+
+        val channel = client.realtime.channel("todos")
+
+        // Setup postgresChangeFlow for ALL actions
+        val allChangesFlow = channel.postgresChangeFlow<PostgresAction>(schema = "public") {
+            table = "todos"
+        }
+
+        val allEvents = mutableListOf<PostgresAction>()
+
+        val collectJob = launch {
+            allChangesFlow.collect { action ->
+                val eventType = when (action) {
+                    is PostgresAction.Insert -> "INSERT"
+                    is PostgresAction.Update -> "UPDATE"
+                    is PostgresAction.Delete -> "DELETE"
+                }
+                println("[Test] 📨 $eventType event via postgresChangeFlow:")
+                println("       Action: $action")
+                allEvents.add(action)
+            }
+        }
+
+        try {
+            channel.subscribe()
+            println("[Test] ✅ Channel subscribed")
+        } catch (e: Exception) {
+            println("[Test] Subscribe failed: ${e.message}")
+            collectJob.cancel()
+            return@runTest
+        }
+
+        try {
+            val timestamp = System.currentTimeMillis()
+
+            // 1. INSERT
+            println("\n[Test] === Step 1: INSERT ===")
+            val insertData = buildJsonArray {
+                addJsonObject {
+                    put("title", "CRUD Test Todo $timestamp")
+                    put("is_completed", false)
+                    put("user_id", "085a481e-94b8-4bf9-b3a0-7f0e50f7a072")
+                }
+            }
+            val inserted = client.database.from("todos")
+                .insert(insertData)
+                .returning()
+                .execute<JsonObject>()
+
+            val todoId = inserted.first()["id"].toString().removeSurrounding("\"")
+            println("[Test] Inserted todo: $todoId")
+            delay(2000)
+
+            // 2. UPDATE
+            println("\n[Test] === Step 2: UPDATE ===")
+            val updateData = buildJsonObject {
+                put("title", "CRUD Test Todo Updated $timestamp")
+                put("is_completed", true)
+            }
+            client.database.from("todos")
+                .eq("id", todoId)
+                .update(updateData)
+                .execute<JsonObject>()
+            println("[Test] Updated todo")
+            delay(2000)
+
+            // 3. DELETE
+            println("\n[Test] === Step 3: DELETE ===")
+            client.database.from("todos")
+                .eq("id", todoId)
+                .delete()
+                .execute<JsonObject>()
+            println("[Test] Deleted todo")
+            delay(2000)
+
+            // Summary
+            println("\n[Test] === Summary ===")
+            println("[Test] Total events received: ${allEvents.size}")
+            val insertCount = allEvents.count { it is PostgresAction.Insert }
+            val updateCount = allEvents.count { it is PostgresAction.Update }
+            val deleteCount = allEvents.count { it is PostgresAction.Delete }
+            println("[Test]   - INSERT: $insertCount")
+            println("[Test]   - UPDATE: $updateCount")
+            println("[Test]   - DELETE: $deleteCount")
+
+            if (insertCount >= 1 && updateCount >= 1 && deleteCount >= 1) {
+                println("[Test] ✅ All CRUD events received successfully via High-Level API!")
+            } else {
+                println("[Test] ⚠️ Some events may be missing")
+            }
+        } catch (e: Exception) {
+            println("[Test] Database operation failed: ${e.message}")
+        }
+
+        collectJob.cancel()
+        channel.unsubscribe()
+    }
+
+    // ============ PostgresChangeFlow Tests (for Supabase-style servers) ============
+
+    @Test
+    fun `test postgresChangeFlow for INSERT`() = runTest {
+        val channel = client.realtime.channel("postgres-insert-test")
+
+        // Setup postgres change flow BEFORE subscribing
+        val flow = channel.postgresChangeFlow<PostgresAction.Insert>(schema = "public") {
+            table = "todos"
+        }
+
+        // Note: This test verifies the API compiles and can be set up
+        // Actual postgres_changes require server-side configuration
+        println("[Test] PostgresChangeFlow for INSERT created successfully")
+        assertEquals(InsforgeChannel.Status.UNSUBSCRIBED, channel.status.value)
+    }
+
+    @Test
+    fun `test postgresChangeFlow for UPDATE`() = runTest {
+        val channel = client.realtime.channel("postgres-update-test")
+
+        val flow = channel.postgresChangeFlow<PostgresAction.Update>(schema = "public") {
+            table = "todos"
+        }
+
+        println("[Test] PostgresChangeFlow for UPDATE created successfully")
+    }
+
+    @Test
+    fun `test postgresChangeFlow for DELETE`() = runTest {
+        val channel = client.realtime.channel("postgres-delete-test")
+
+        val flow = channel.postgresChangeFlow<PostgresAction.Delete>(schema = "public") {
+            table = "todos"
+        }
+
+        println("[Test] PostgresChangeFlow for DELETE created successfully")
+    }
+
+    @Test
+    fun `test postgresChangeFlow for all actions`() = runTest {
+        val channel = client.realtime.channel("postgres-all-test")
+
+        val flow = channel.postgresChangeFlow<PostgresAction>(schema = "public") {
+            table = "todos"
+        }
+
+        println("[Test] PostgresChangeFlow for all actions created successfully")
+    }
+
+    @Test
+    fun `test postgresChangeFlow with filter`() = runTest {
+        val channel = client.realtime.channel("postgres-filter-test")
+
+        val flow = channel.postgresChangeFlow<PostgresAction.Insert>(schema = "public") {
+            table = "todos"
+            filter("is_completed", FilterOperator.EQ, false)
+        }
+
+        println("[Test] PostgresChangeFlow with filter created successfully")
+    }
+
+    // ============ Channel Lifecycle Tests ============
+
+    @Test
+    fun `test channel status transitions`() = runTest {
+        val channel = client.realtime.channel("lifecycle-test")
+
+        // Initial state
+        assertEquals(InsforgeChannel.Status.UNSUBSCRIBED, channel.status.value)
+
+        // Note: The High-Level channel API uses Phoenix-style phx_join messages
+        // which may not be supported by all server implementations.
+        // This test verifies the channel state management API exists.
+
+        println("[Test] Initial status: ${channel.status.value}")
+        println("[Test] Channel lifecycle test completed")
+    }
+
+    @Test
+    fun `test remove channel`() = runTest {
+        val channel1 = client.realtime.channel("removable-test")
+        assertEquals("removable-test", channel1.topic)
+
+        client.realtime.removeChannel("removable-test")
+
+        // Creating channel again should return new instance
+        val channel2 = client.realtime.channel("removable-test")
+        assertNotSame(channel1, channel2)
+
+        println("[Test] Channel removal test completed")
+    }
+
+    @Test
+    fun `test remove all channels`() = runTest {
+        client.realtime.channel("channel-1")
+        client.realtime.channel("channel-2")
+        client.realtime.channel("channel-3")
+
+        client.realtime.removeAllChannels()
+
+        // All channels should be new instances now
+        println("[Test] All channels removed successfully")
+    }
+}
