@@ -102,6 +102,7 @@ tasks.withType<Test> {
 
 // Source JAR for publishing
 val sourcesJar by tasks.registering(Jar::class) {
+    dependsOn(generateVersionFile)
     archiveClassifier.set("sources")
     from(sourceSets.main.get().allSource)
 }
