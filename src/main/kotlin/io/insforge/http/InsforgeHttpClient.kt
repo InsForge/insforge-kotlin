@@ -2,6 +2,7 @@ package io.insforge.http
 
 import io.insforge.InsforgeClient
 import io.insforge.InsforgeVersion
+import io.insforge.logging.InsforgeLogLevel
 import io.ktor.client.*
 import io.ktor.client.engine.okhttp.OkHttp
 import io.ktor.client.plugins.*
@@ -34,16 +35,15 @@ object InsforgeHttpClient {
                 })
             }
 
-            // Logging - configurable HTTP request/response logging
-            install(Logging) {
-                logger = object : Logger {
-                    override fun log(message: String) {
-                        println("[InsForge HTTP] $message")
-                    }
+            // Logging - uses Napier via InsforgeHttpLogger
+            // DEBUG level: logs request method/URL and response status
+            // VERBOSE level: logs full headers and body content
+            if (config.logLevel != InsforgeLogLevel.NONE) {
+                install(Logging) {
+                    logger = InsforgeHttpLogger()
+                    level = config.logLevel.toKtorLogLevel()
+                    sanitizeHeader { header -> header == HttpHeaders.Authorization }
                 }
-                level = config.defaultLogLevel
-                // Note: No header sanitization - Authorization header is shown in full for debugging
-                // In production, consider masking sensitive headers
             }
 
             // WebSocket support

@@ -1,8 +1,8 @@
 package io.insforge
 
+import io.insforge.logging.InsforgeLogLevel
 import io.insforge.plugins.InsforgePlugin
 import io.ktor.client.engine.*
-import io.ktor.client.plugins.logging.*
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlin.time.Duration
 
@@ -14,7 +14,7 @@ data class InsforgeClientConfig(
     val anonKey: String,
     val useHTTPS: Boolean,
     val httpEngine: HttpClientEngine?,
-    val defaultLogLevel: LogLevel,
+    val logLevel: InsforgeLogLevel,
     val requestTimeout: Duration,
     val coroutineDispatcher: CoroutineDispatcher,
     val accessToken: (() -> String?)?,

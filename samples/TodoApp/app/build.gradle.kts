@@ -74,6 +74,9 @@ dependencies {
     // CIO has DNS resolution issues on Android
     implementation("io.ktor:ktor-client-core:2.3.7")
     implementation("io.ktor:ktor-client-okhttp:2.3.7")  // Use OkHttp engine for Android
+    // Logging - Napier (cross-platform: JVM/Android/iOS)
+    implementation("io.github.aakira:napier:2.7.1")
+
     implementation("io.ktor:ktor-client-content-negotiation:2.3.7")
     implementation("io.ktor:ktor-serialization-kotlinx-json:2.3.7")
     implementation("io.ktor:ktor-client-logging:2.3.7")

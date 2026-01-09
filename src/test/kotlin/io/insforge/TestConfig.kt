@@ -6,7 +6,7 @@ import io.insforge.database.Database
 import io.insforge.functions.Functions
 import io.insforge.realtime.Realtime
 import io.insforge.storage.Storage
-import io.ktor.client.plugins.logging.LogLevel
+import io.insforge.logging.InsforgeLogLevel
 
 /**
  * Test configuration for Insforge SDK integration tests
@@ -53,7 +53,7 @@ object TestConfig {
             anonKey = ANON_KEY
         ) {
             // Enable full HTTP logging for debugging
-            defaultLogLevel = LogLevel.ALL
+            logLevel = InsforgeLogLevel.VERBOSE
             install(Database)
         }
     }
@@ -67,7 +67,7 @@ object TestConfig {
             anonKey = ANON_KEY
         ) {
             // Enable full HTTP logging for debugging
-            defaultLogLevel = LogLevel.ALL
+            logLevel = InsforgeLogLevel.VERBOSE
             install(Storage)
         }
     }

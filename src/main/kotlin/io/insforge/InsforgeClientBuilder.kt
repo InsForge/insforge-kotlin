@@ -1,10 +1,10 @@
 package io.insforge
 
-import io.insforge.http.InsforgeHttpClient
+import io.insforge.logging.InsforgeLogLevel
+import io.insforge.logging.InsforgeLogger
 import io.insforge.plugins.InsforgePlugin
 import io.insforge.plugins.InsforgePluginProvider
 import io.ktor.client.engine.*
-import io.ktor.client.plugins.logging.*
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlin.time.Duration
@@ -28,33 +28,42 @@ class InsforgeClientBuilder @PublishedApi internal constructor(
     var httpEngine: HttpClientEngine? = null
 
     /**
-     * HTTP request/response logging level.
+     * SDK logging level.
      *
      * Available levels:
-     * - LogLevel.NONE: No logging (default, recommended for production)
-     * - LogLevel.INFO: Log request/response lines only
-     * - LogLevel.HEADERS: Log headers
-     * - LogLevel.BODY: Log request/response body
-     * - LogLevel.ALL: Log everything including headers and body (recommended for debugging)
+     * - InsforgeLogLevel.NONE: No logging (default, recommended for production)
+     * - InsforgeLogLevel.ERROR: Only errors
+     * - InsforgeLogLevel.WARN: Warnings and errors
+     * - InsforgeLogLevel.INFO: Informational messages
+     * - InsforgeLogLevel.DEBUG: Debug info (request method, URL, response status)
+     * - InsforgeLogLevel.VERBOSE: Full details (headers, request/response bodies)
      *
      * Example:
      * ```kotlin
      * val client = createInsforgeClient(url, key) {
-     *     defaultLogLevel = LogLevel.ALL  // Enable full HTTP debugging
+     *     logLevel = InsforgeLogLevel.DEBUG  // Log request/response status
+     *     // or
+     *     logLevel = InsforgeLogLevel.VERBOSE  // Log everything including bodies
      * }
      * ```
      *
-     * Output example (LogLevel.ALL):
+     * Output example (DEBUG):
      * ```
-     * [InsForge HTTP] REQUEST: POST https://example.com/api/database/records/todos
-     * [InsForge HTTP] Content-Type: application/json
-     * [InsForge HTTP] Authorization: ***
-     * [InsForge HTTP] BODY: [{"title":"Buy milk","completed":false}]
-     * [InsForge HTTP] RESPONSE: 201 Created
-     * [InsForge HTTP] BODY: [{"id":"123","title":"Buy milk","completed":false}]
+     * [InsForge.HTTP] POST https://example.com/api/database/records/todos
+     * [InsForge.HTTP] RESPONSE: 201 Created
+     * ```
+     *
+     * Output example (VERBOSE):
+     * ```
+     * [InsForge.HTTP] POST https://example.com/api/database/records/todos
+     * [InsForge.HTTP] -> Content-Type: application/json
+     * [InsForge.HTTP] -> Authorization: Bearer ***
+     * [InsForge.HTTP] {"title":"Buy milk","completed":false}
+     * [InsForge.HTTP] RESPONSE: 201 Created
+     * [InsForge.HTTP] {"id":"123","title":"Buy milk","completed":false}
      * ```
      */
-    var defaultLogLevel: LogLevel = LogLevel.NONE
+    var logLevel: InsforgeLogLevel = InsforgeLogLevel.NONE
 
     /**
      * Request timeout duration
@@ -131,13 +140,16 @@ class InsforgeClientBuilder @PublishedApi internal constructor(
             anonKey = anonKey,
             useHTTPS = useHTTPS,
             httpEngine = httpEngine,
-            defaultLogLevel = defaultLogLevel,
+            logLevel = logLevel,
             requestTimeout = requestTimeout,
             coroutineDispatcher = coroutineDispatcher,
             accessToken = accessToken,
             customHeaders = customHeaders.toMap(),
             plugins = plugins.toMap()
         )
+
+        // Initialize logger with configured level
+        InsforgeLogger.initialize(logLevel)
 
         return InsforgeClientImpl(config)
     }

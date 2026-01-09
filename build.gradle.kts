@@ -22,6 +22,9 @@ dependencies {
     // Serialization
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.6.2")
 
+    // Logging - Napier (cross-platform: JVM/Android/iOS)
+    api("io.github.aakira:napier:2.7.1")
+
     // HTTP Client (Ktor)
     // OkHttp is the default engine - works on both JVM and Android
     api("io.ktor:ktor-client-core:2.3.7")
