@@ -559,8 +559,8 @@ class StorageTest {
 
             val bucket = client.storage[uploadBucketName]
 
-            // Read the local cpu.png file from project root
-            val localFile = java.io.File("cpu.png")
+            // Read the local cpu.png file from tests directory
+            val localFile = java.io.File("tests/cpu.png")
             if (!localFile.exists()) {
                 println("Skipping test: cpu.png not found at ${localFile.absolutePath}")
                 client.storage.deleteBucket(uploadBucketName)
@@ -616,8 +616,8 @@ class StorageTest {
 
             val bucket = client.storage[uploadBucketName]
 
-            // Read the local cpu.png file from project root
-            val localFile = java.io.File("cpu.png")
+            // Read the local cpu.png file from tests directory
+            val localFile = java.io.File("tests/cpu.png")
             if (!localFile.exists()) {
                 println("Skipping test: cpu.png not found at ${localFile.absolutePath}")
                 client.storage.deleteBucket(uploadBucketName)
