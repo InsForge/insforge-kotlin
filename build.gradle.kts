@@ -100,15 +100,32 @@ tasks.withType<Test> {
     }
 }
 
+// Source JAR for publishing
+val sourcesJar by tasks.registering(Jar::class) {
+    archiveClassifier.set("sources")
+    from(sourceSets.main.get().allSource)
+}
+
+// Javadoc JAR for publishing
+val javadocJar by tasks.registering(Jar::class) {
+    archiveClassifier.set("javadoc")
+    from(tasks.named("javadoc"))
+}
+
 publishing {
     publications {
-        create<MavenPublication>("maven") {
+        create<MavenPublication>("gpr") {
             from(components["java"])
+            artifact(sourcesJar)
+            artifact(javadocJar)
+
+            groupId = "dev.insforge"
+            artifactId = "insforge-kotlin"
 
             pom {
                 name.set("InsForge Kotlin SDK")
                 description.set("Official Kotlin SDK for InsForge Backend-as-a-Service")
-                url.set("https://github.com/insforge/insforge-kotlin")
+                url.set("https://github.com/InsForge/insforge-kotlin")
 
                 licenses {
                     license {
@@ -116,6 +133,31 @@ publishing {
                         url.set("https://opensource.org/licenses/MIT")
                     }
                 }
+
+                developers {
+                    developer {
+                        id.set("insforge")
+                        name.set("InsForge Team")
+                        email.set("support@insforge.dev")
+                    }
+                }
+
+                scm {
+                    connection.set("scm:git:git://github.com/InsForge/insforge-kotlin.git")
+                    developerConnection.set("scm:git:ssh://github.com/InsForge/insforge-kotlin.git")
+                    url.set("https://github.com/InsForge/insforge-kotlin")
+                }
+            }
+        }
+    }
+
+    repositories {
+        maven {
+            name = "GitHubPackages"
+            url = uri("https://maven.pkg.github.com/InsForge/insforge-kotlin")
+            credentials {
+                username = System.getenv("GITHUB_ACTOR") ?: project.findProperty("gpr.user") as String? ?: ""
+                password = System.getenv("GITHUB_TOKEN") ?: project.findProperty("gpr.token") as String? ?: ""
             }
         }
     }
