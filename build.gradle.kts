@@ -15,6 +15,10 @@ scmVersion {
         prefix.set("v")
     }
     versionIncrementer("incrementPatch")
+    checks {
+        // Disable remote branch tracking check
+        aheadOfRemote.set(false)
+    }
 }
 
 repositories {
