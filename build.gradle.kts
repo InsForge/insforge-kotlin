@@ -115,14 +115,18 @@ tasks.withType<Test> {
     }
 }
 
-// Source JAR for publishing
-val sourcesJar by tasks.registering(Jar::class) {
+// Ensure all Jar tasks depend on generateVersionFile
+tasks.withType<Jar> {
     dependsOn(generateVersionFile)
+}
+
+// Source JAR for GitHub Packages publishing
+val sourcesJar by tasks.registering(Jar::class) {
     archiveClassifier.set("sources")
     from(sourceSets.main.get().allSource)
 }
 
-// Javadoc JAR for publishing
+// Javadoc JAR for GitHub Packages publishing
 val javadocJar by tasks.registering(Jar::class) {
     archiveClassifier.set("javadoc")
     from(tasks.named("javadoc"))
@@ -223,3 +227,8 @@ mavenPublishing {
 // - ORG_GRADLE_PROJECT_signingInMemoryKeyId
 // - ORG_GRADLE_PROJECT_signingInMemoryKey
 // - ORG_GRADLE_PROJECT_signingInMemoryKeyPassword
+
+// Fix task dependencies for signing
+tasks.withType<Sign>().configureEach {
+    dependsOn(tasks.withType<Jar>())
+}
