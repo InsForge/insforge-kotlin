@@ -36,10 +36,10 @@ jobs:
           sed -i "s/version = \".*\"/version = \"${{ github.event.inputs.version }}\"/" build.gradle.kts
 
       - name: Build and Publish to GitHub Packages
-        run: ./gradlew clean publish -x test
+        run: ./gradlew clean publishAllPublicationsToGitHubPackagesRepository -x test
         env:
           GITHUB_ACTOR: ${{ github.actor }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GPG_KEY_ID: ${{ secrets.GPG_KEY_ID }}
-          GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
-          GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
+          ORG_GRADLE_PROJECT_signingInMemoryKeyId: ${{ secrets.GPG_KEY_ID }}
+          ORG_GRADLE_PROJECT_signingInMemoryKey: ${{ secrets.GPG_PRIVATE_KEY }}
+          ORG_GRADLE_PROJECT_signingInMemoryKeyPassword: ${{ secrets.GPG_PASSPHRASE }}

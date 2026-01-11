@@ -4,6 +4,7 @@ plugins {
     `maven-publish`
     signing
     id("pl.allegro.tech.build.axion-release") version "1.17.0"
+    id("com.vanniktech.maven.publish") version "0.28.0"
 }
 
 group = "dev.insforge"
@@ -175,26 +176,50 @@ publishing {
                 password = System.getenv("GITHUB_TOKEN") ?: project.findProperty("gpr.token") as String? ?: ""
             }
         }
-        maven {
-            name = "MavenCentral"
-            url = uri("https://central.sonatype.com/api/v1/publisher/upload")
-            credentials {
-                username = System.getenv("MAVEN_CENTRAL_USERNAME") ?: project.findProperty("mavenCentralUsername") as String? ?: ""
-                password = System.getenv("MAVEN_CENTRAL_PASSWORD") ?: project.findProperty("mavenCentralPassword") as String? ?: ""
+    }
+}
+
+// Maven Central publishing via Vanniktech plugin
+mavenPublishing {
+    publishToMavenCentral(com.vanniktech.maven.publish.SonatypeHost.CENTRAL_PORTAL)
+    signAllPublications()
+
+    coordinates(
+        groupId = "dev.insforge",
+        artifactId = "insforge-kotlin",
+        version = version.toString()
+    )
+
+    pom {
+        name.set("InsForge Kotlin SDK")
+        description.set("Official Kotlin SDK for InsForge Backend-as-a-Service")
+        url.set("https://github.com/InsForge/insforge-kotlin")
+        inceptionYear.set("2025")
+
+        licenses {
+            license {
+                name.set("MIT License")
+                url.set("https://opensource.org/licenses/MIT")
             }
+        }
+
+        developers {
+            developer {
+                id.set("insforge")
+                name.set("InsForge Team")
+                email.set("support@insforge.dev")
+            }
+        }
+
+        scm {
+            connection.set("scm:git:git://github.com/InsForge/insforge-kotlin.git")
+            developerConnection.set("scm:git:ssh://github.com/InsForge/insforge-kotlin.git")
+            url.set("https://github.com/InsForge/insforge-kotlin")
         }
     }
 }
 
-// GPG Signing
-signing {
-    val signingKeyId = System.getenv("GPG_KEY_ID") ?: project.findProperty("signing.keyId") as String?
-    val signingKey = System.getenv("GPG_PRIVATE_KEY") ?: project.findProperty("signing.key") as String?
-    val signingPassword = System.getenv("GPG_PASSPHRASE") ?: project.findProperty("signing.password") as String?
-
-    if (signingKeyId != null && signingKey != null && signingPassword != null) {
-        useInMemoryPgpKeys(signingKeyId, signingKey, signingPassword)
-    }
-
-    sign(publishing.publications["mavenCentral"])
-}
+// Note: GPG signing is handled by the vanniktech maven-publish plugin via environment variables:
+// - ORG_GRADLE_PROJECT_signingInMemoryKeyId
+// - ORG_GRADLE_PROJECT_signingInMemoryKey
+// - ORG_GRADLE_PROJECT_signingInMemoryKeyPassword
