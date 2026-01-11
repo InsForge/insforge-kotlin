@@ -3,10 +3,19 @@ plugins {
     kotlin("plugin.serialization") version "1.9.22"
     `maven-publish`
     signing
+    id("pl.allegro.tech.build.axion-release") version "1.17.0"
 }
 
 group = "dev.insforge"
-version = "0.1.0-SNAPSHOT"
+version = scmVersion.version
+
+// Configure axion-release plugin
+scmVersion {
+    tag {
+        prefix.set("v")
+    }
+    versionIncrementer("incrementPatch")
+}
 
 repositories {
     mavenCentral()
