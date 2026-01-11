@@ -116,7 +116,12 @@ tasks.withType<Test> {
 }
 
 // Ensure all Jar tasks depend on generateVersionFile
-tasks.withType<Jar> {
+tasks.withType<Jar>().configureEach {
+    dependsOn(generateVersionFile)
+}
+
+// Explicitly configure kotlinSourcesJar task created by vanniktech plugin
+tasks.matching { it.name == "kotlinSourcesJar" }.configureEach {
     dependsOn(generateVersionFile)
 }
 
