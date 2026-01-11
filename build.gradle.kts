@@ -7,7 +7,12 @@ plugins {
 }
 
 group = "dev.insforge"
-version = scmVersion.version
+// Allow version override via -Pversion=x.y.z, otherwise use axion-release
+version = if (project.hasProperty("version") && project.property("version") != "unspecified") {
+    project.property("version").toString()
+} else {
+    scmVersion.version
+}
 
 // Configure axion-release plugin
 scmVersion {
