@@ -40,3 +40,13 @@ docs/
 
 # Generated files
 openapi
+
+# Documentation files (if auto-generated)
+BUILD*.md
+PROJECT_SUMMARY.md
+COMPLETE_GUIDE.md
+FINAL_SUMMARY.md
+
+# Sample app gradle wrapper (use project root's wrapper)
+samples/TodoApp/gradle/
+samples/TodoApp/.mcp.json
