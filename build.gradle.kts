@@ -2,6 +2,7 @@ plugins {
     kotlin("jvm") version "1.9.22"
     kotlin("plugin.serialization") version "1.9.22"
     `maven-publish`
+    signing
 }
 
 group = "dev.insforge"
@@ -115,7 +116,7 @@ val javadocJar by tasks.registering(Jar::class) {
 
 publishing {
     publications {
-        create<MavenPublication>("gpr") {
+        create<MavenPublication>("mavenCentral") {
             from(components["java"])
             artifact(sourcesJar)
             artifact(javadocJar)
@@ -161,5 +162,26 @@ publishing {
                 password = System.getenv("GITHUB_TOKEN") ?: project.findProperty("gpr.token") as String? ?: ""
             }
         }
+        maven {
+            name = "MavenCentral"
+            url = uri("https://central.sonatype.com/api/v1/publisher/upload")
+            credentials {
+                username = System.getenv("MAVEN_CENTRAL_USERNAME") ?: project.findProperty("mavenCentralUsername") as String? ?: ""
+                password = System.getenv("MAVEN_CENTRAL_PASSWORD") ?: project.findProperty("mavenCentralPassword") as String? ?: ""
+            }
+        }
     }
+}
+
+// GPG Signing
+signing {
+    val signingKeyId = System.getenv("GPG_KEY_ID") ?: project.findProperty("signing.keyId") as String?
+    val signingKey = System.getenv("GPG_PRIVATE_KEY") ?: project.findProperty("signing.key") as String?
+    val signingPassword = System.getenv("GPG_PASSPHRASE") ?: project.findProperty("signing.password") as String?
+
+    if (signingKeyId != null && signingKey != null && signingPassword != null) {
+        useInMemoryPgpKeys(signingKeyId, signingKey, signingPassword)
+    }
+
+    sign(publishing.publications["mavenCentral"])
 }
