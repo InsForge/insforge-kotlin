@@ -1,0 +1,42 @@
+# Gradle
+.gradle/
+build/
+bin/
+
+# IDE
+.idea/
+*.iml
+.vscode/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Local configuration
+local.properties
+gradle.properties
+
+# Kotlin
+*.class
+
+# Logs
+*.log
+
+# Test outputs
+test-results/
+
+# Samples build outputs
+samples/**/build/
+samples/**/.gradle/
+samples/**/.idea/
+
+# Documentation (auto-generated)
+docs/
+
+# Temporary files
+*.tmp
+*.bak
+*.swp
+
+# Generated files
+openapi
