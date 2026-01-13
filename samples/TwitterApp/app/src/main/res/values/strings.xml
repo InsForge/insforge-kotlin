@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Twitter Clone</string>
+
+    <!-- Auth -->
+    <string name="sign_in">Sign In</string>
+    <string name="sign_up">Sign Up</string>
+    <string name="email">Email</string>
+    <string name="password">Password</string>
+    <string name="name">Name</string>
+    <string name="sign_in_with_oauth">Sign in with OAuth</string>
+    <string name="dont_have_account">Don\'t have an account?</string>
+    <string name="already_have_account">Already have an account?</string>
+
+    <!-- Home -->
+    <string name="home">Home</string>
+    <string name="profile">Profile</string>
+    <string name="tweet">Tweet</string>
+    <string name="whats_happening">What\'s happening?</string>
+
+    <!-- Tweet -->
+    <string name="post_tweet">Post</string>
+    <string name="add_photo">Add Photo</string>
+    <string name="tweet_posted">Tweet posted!</string>
+
+    <!-- Profile -->
+    <string name="edit_profile">Edit Profile</string>
+    <string name="followers">Followers</string>
+    <string name="following">Following</string>
+    <string name="follow">Follow</string>
+    <string name="unfollow">Unfollow</string>
+    <string name="bio">Bio</string>
+    <string name="save">Save</string>
+
+    <!-- Actions -->
+    <string name="like">Like</string>
+    <string name="unlike">Unlike</string>
+    <string name="delete">Delete</string>
+    <string name="sign_out">Sign Out</string>
+
+    <!-- Messages -->
+    <string name="loading">Loading...</string>
+    <string name="error_occurred">An error occurred</string>
+    <string name="no_tweets">No tweets yet</string>
+</resources>
