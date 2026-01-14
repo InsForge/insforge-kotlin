@@ -2,34 +2,55 @@
 
 Official Kotlin SDK for InsForge - A modern Backend-as-a-Service platform.
 
-## 🎉 Status: Complete & Production Ready
-
-```bash
-✅ BUILD SUCCESSFUL in 5s
-📦 JAR Size: 806KB
-🎯 All 6 Modules Implemented
-```
+[![Maven Central](https://img.shields.io/maven-central/v/dev.insforge/insforge-kotlin)](https://central.sonatype.com/artifact/dev.insforge/insforge-kotlin)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 ## Features
 
-- 🔐 **Authentication** - Email/password, OAuth, email verification, password reset ✅
-- 📊 **Database** - PostgREST-style API with type-safe queries ✅  
-- 📦 **Storage** - S3-compatible object storage with presigned URLs ✅
-- ⚡ **Functions** - Serverless functions in Deno runtime ✅
-- 🔄 **Realtime** - WebSocket pub/sub channels ✅
-- 🤖 **AI** - Chat completion and image generation via OpenRouter ✅
+- 🔐 **Authentication** - Email/password, OAuth, email verification, password reset
+- 📊 **Database** - PostgREST-style API with type-safe queries
+- 📦 **Storage** - S3-compatible object storage with presigned URLs
+- ⚡ **Functions** - Serverless functions in Deno runtime
+- 🔄 **Realtime** - WebSocket pub/sub channels via Socket.IO
+- 🤖 **AI** - Chat completion and image generation via OpenRouter
 
 ## Installation
+
+### Maven Central (Recommended)
+
+```kotlin
+// build.gradle.kts
+dependencies {
+    implementation("dev.insforge:insforge-kotlin:0.1.2")
+}
+```
+
+### GitHub Packages
+
+```kotlin
+// build.gradle.kts
+repositories {
+    maven {
+        url = uri("https://maven.pkg.github.com/InsForge/insforge-kotlin")
+        credentials {
+            username = "your-github-username"
+            password = "your-github-token"  // needs read:packages permission
+        }
+    }
+}
+
+dependencies {
+    implementation("dev.insforge:insforge-kotlin:0.1.2")
+}
+```
 
 ### Build from Source
 
 ```bash
-git clone https://github.com/insforge/insforge-kotlin.git
+git clone https://github.com/InsForge/insforge-kotlin.git
 cd insforge-kotlin
 ./gradlew publishToMavenLocal
 ```
-
-### Use in Your Project
 
 ```kotlin
 // build.gradle.kts
@@ -38,24 +59,24 @@ repositories {
 }
 
 dependencies {
-    implementation("io.insforge:insforge-kotlin:0.1.0-SNAPSHOT")
+    implementation("dev.insforge:insforge-kotlin:0.1.2-SNAPSHOT")
 }
 ```
 
 ## Quick Start
 
 ```kotlin
-import io.insforge.createInsforgeClient
-import io.insforge.auth.*
-import io.insforge.database.*
-import io.insforge.storage.*
-import io.insforge.functions.*
-import io.insforge.realtime.*
-import io.insforge.ai.*
+import dev.insforge.createInsforgeClient
+import dev.insforge.auth.*
+import dev.insforge.database.*
+import dev.insforge.storage.*
+import dev.insforge.functions.*
+import dev.insforge.realtime.*
+import dev.insforge.ai.*
 
 val client = createInsforgeClient(
-    url = "https://your-project.insforge.io",
-    apiKey = "your-api-key"
+    baseURL = "https://your-project.insforge.io",
+    anonKey = "your-anon-key"
 ) {
     install(Auth)
     install(Database)
@@ -66,26 +87,39 @@ val client = createInsforgeClient(
 }
 
 // Authentication
-client.auth.signUp("user@example.com", "password123")
+client.auth.signIn("user@example.com", "password123")
 
-// Database
+// Database - typed queries
+@Serializable
+data class Post(val id: String, val title: String, val published: Boolean)
+
 val posts = client.database.from("posts")
-    .select().eq("published", true).execute<Post>()
+    .select()
+    .eq("published", true)
+    .execute<Post>()
+
+// Database - raw queries (for joins/nested data)
+val rawData = client.database.from("posts")
+    .select("id,title,author!posts_author_id_fkey(name)")
+    .executeRaw()
 
 // Storage
-client.storage.uploadFile("bucket", "key", bytes, "image/jpeg")
+val result = client.storage.from("images").upload("photo.jpg", bytes) {
+    contentType = "image/jpeg"
+}
 
 // Functions
-val result = client.functions.invoke<Response>("hello-world", request)
+val response = client.functions.invoke<MyResponse>("hello-world", request)
 
 // Realtime
 client.realtime.connect()
-client.realtime.subscribe("chat:*") { message ->
-    println(message.payload)
+client.realtime.subscribe("chat:room1")
+client.realtime.on("message") { msg ->
+    println(msg.payload)
 }
 
 // AI
-val response = client.ai.chatCompletion(
+val chatResponse = client.ai.chatCompletion(
     model = "openai/gpt-4",
     messages = listOf(ChatMessage("user", "Hello!"))
 )
@@ -93,28 +127,26 @@ val response = client.ai.chatCompletion(
 
 ## Documentation
 
-- 📖 [Complete Guide](COMPLETE_GUIDE.md) - Full API documentation with examples
-- 🚀 [Getting Started](GETTING_STARTED.md) - Quick start guide
-- 📊 [Project Summary](PROJECT_SUMMARY.md) - Technical overview
-- 🔧 [OpenAPI Specs](openapi/) - API specifications
+- 📖 [Getting Started](GETTING_STARTED.md) - Quick start guide with detailed examples
 
 ## Project Structure
 
 ```
-src/main/kotlin/io/insforge/
+src/main/kotlin/dev/insforge/
 ├── InsforgeClient.kt          # Core client
-├── auth/                      # ✅ Authentication  
-├── database/                  # ✅ Database
-├── storage/                   # ✅ Storage
-├── functions/                 # ✅ Functions
-├── realtime/                  # ✅ Realtime
-├── ai/                        # ✅ AI
+├── auth/                      # Authentication module
+├── database/                  # Database module
+├── storage/                   # Storage module
+├── functions/                 # Functions module
+├── realtime/                  # Realtime module
+├── ai/                        # AI module
 ├── plugins/                   # Plugin system
-├── http/                      # HTTP client
+├── http/                      # HTTP client (Ktor + OkHttp)
+├── logging/                   # Logging (Napier)
 └── exceptions/                # Error handling
 ```
 
-## Build
+## Build & Development
 
 ```bash
 # Build
@@ -127,6 +159,30 @@ src/main/kotlin/io/insforge/
 ./gradlew publishToMavenLocal
 ```
 
+## Release Process
+
+To create a new release and publish to Maven Central:
+
+```bash
+# 1. Ensure all changes are committed
+git add .
+git commit -m "your commit message"
+
+# 2. Create release (auto-increments version, creates tag, pushes to remote)
+./gradlew release
+
+# 3. Create GitHub Release (triggers CI to publish to Maven Central)
+gh release create v$(./gradlew currentVersion -q) \
+    --title "v$(./gradlew currentVersion -q)" \
+    --generate-notes
+```
+
+Or as a single command:
+
+```bash
+./gradlew release && gh release create v$(./gradlew currentVersion -q) --title "v$(./gradlew currentVersion -q)" --generate-notes
+```
+
 ## Requirements
 
 - Java 11+
@@ -134,28 +190,42 @@ src/main/kotlin/io/insforge/
 
 ## Tech Stack
 
-- **Kotlin** 1.9.22
-- **Ktor Client** 2.3.7 - HTTP & WebSocket
-- **Kotlinx Serialization** 1.6.2 - JSON
-- **Kotlinx Coroutines** 1.7.3 - Async
+| Component | Technology | Version |
+|-----------|------------|---------|
+| Language | Kotlin | 1.9.22 |
+| HTTP Client | Ktor + OkHttp | 2.3.7 |
+| JSON | Kotlinx Serialization | 1.6.2 |
+| Async | Kotlinx Coroutines | 1.7.3 |
+| Logging | Napier | 2.7.1 |
+| Realtime | Socket.IO | 2.1.1 |
 
 ## Modules
 
-| Module | Features | Status |
-|--------|----------|--------|
-| Auth | Sign up/in, Email verification, Password reset, OAuth | ✅ Complete |
-| Database | CRUD, Query builder, Table management | ✅ Complete |
-| Storage | Upload/Download, Buckets, Presigned URLs | ✅ Complete |
-| Functions | Invoke, Create, Update, Delete | ✅ Complete |
-| Realtime | WebSocket, Subscribe, Publish, History | ✅ Complete |
-| AI | Chat, Image gen, Streaming, Stats | ✅ Complete |
+| Module | Features |
+|--------|----------|
+| Auth | Sign up/in, Email verification, Password reset, OAuth, Session persistence |
+| Database | CRUD, Query builder, Type-safe queries, Raw queries for joins |
+| Storage | Upload/Download, Buckets, Presigned URLs, S3 compatible |
+| Functions | Invoke serverless functions |
+| Realtime | Pub/sub channels, Connection state management |
+| AI | Chat completion, Image generation, Streaming |
+
+## Contributing
+
+We welcome contributions! Please see our [Contributing Guide](CONTRIBUTING.md) for details.
+
+1. Fork the repository
+2. Create your feature branch (`git checkout -b feature/amazing-feature`)
+3. Commit your changes (`git commit -m 'Add amazing feature'`)
+4. Push to the branch (`git push origin feature/amazing-feature`)
+5. Open a Pull Request
 
 ## License
 
-MIT License
+MIT License - see [LICENSE](LICENSE) for details.
 
 ## Links
 
-- [Documentation](https://docs.insforge.io)
-- [API Reference](https://insforge.io/api-reference)
-- [GitHub](https://github.com/insforge/insforge-kotlin)
+- [InsForge Platform](https://insforge.dev)
+- [GitHub Repository](https://github.com/InsForge/insforge-kotlin)
+- [Maven Central](https://central.sonatype.com/artifact/dev.insforge/insforge-kotlin)
