@@ -3,12 +3,16 @@ package dev.insforge.samples.twitter
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.navigation.NavHostController
@@ -59,6 +63,18 @@ fun TwitterApp(
 ) {
     val navController = rememberNavController()
     val currentUser by authViewModel.currentUser.collectAsState()
+    val isSessionLoading by authViewModel.isSessionLoading.collectAsState()
+
+    // Show loading screen while checking for persisted session
+    if (isSessionLoading) {
+        Box(
+            modifier = Modifier.fillMaxSize(),
+            contentAlignment = Alignment.Center
+        ) {
+            CircularProgressIndicator()
+        }
+        return
+    }
 
     NavHost(
         navController = navController,

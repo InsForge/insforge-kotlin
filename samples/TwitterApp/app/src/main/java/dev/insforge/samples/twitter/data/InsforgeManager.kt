@@ -2,7 +2,7 @@ package dev.insforge.samples.twitter.data
 
 import android.content.Context
 import android.content.Intent
-import android.net.Uri
+import androidx.core.net.toUri
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.edit
@@ -57,7 +57,7 @@ class InsforgeManager(private val context: Context) {
         install(Auth) {
             // Configure BrowserLauncher for OAuth
             browserLauncher = BrowserLauncher { url ->
-                val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url))
+                val intent = Intent(Intent.ACTION_VIEW, url.toUri())
                 intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                 context.startActivity(intent)
             }

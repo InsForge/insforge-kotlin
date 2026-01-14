@@ -18,6 +18,10 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.intOrNull
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 
 class TweetViewModel(
@@ -50,37 +54,30 @@ class TweetViewModel(
             _error.value = null
             try {
                 // Load tweets with profile information using a join
+                // Use executeRaw() for queries with nested/joined data
                 val result = client.database
                     .from("tweets")
-                    .select("""
-                        id,
-                        user_id,
-                        content,
-                        image_url,
-                        image_key,
-                        likes_count,
-                        created_at,
-                        profiles!tweets_user_id_fkey(username, avatar_url, bio)
-                    """.trimIndent())
+                    .select("id,user_id,content,image_url,image_key,likes_count,created_at,profiles!tweets_user_id_fkey(username,avatar_url,bio)")
                     .order("created_at", ascending = false)
                     .limit(50)
-                    .execute<Map<String, Any>>()
+                    .executeRaw()
 
-                // Parse the results manually
-                val parsedTweets = result.mapNotNull { tweetMap ->
+                // Parse the results from JsonArray
+                val parsedTweets = result.mapNotNull { element ->
                     try {
-                        val profileMap = tweetMap["profiles"] as? Map<*, *>
+                        val obj = element.jsonObject
+                        val profile = obj["profiles"]?.jsonObject
                         TweetWithProfile(
-                            id = tweetMap["id"] as String,
-                            userId = tweetMap["user_id"] as String,
-                            content = tweetMap["content"] as String,
-                            imageUrl = tweetMap["image_url"] as? String,
-                            imageKey = tweetMap["image_key"] as? String,
-                            likesCount = (tweetMap["likes_count"] as? Number)?.toInt() ?: 0,
-                            createdAt = tweetMap["created_at"] as String,
-                            username = profileMap?.get("username") as? String,
-                            avatarUrl = profileMap?.get("avatar_url") as? String,
-                            bio = profileMap?.get("bio") as? String
+                            id = obj["id"]?.jsonPrimitive?.content ?: return@mapNotNull null,
+                            userId = obj["user_id"]?.jsonPrimitive?.content ?: return@mapNotNull null,
+                            content = obj["content"]?.jsonPrimitive?.content ?: return@mapNotNull null,
+                            imageUrl = obj["image_url"]?.jsonPrimitive?.contentOrNull,
+                            imageKey = obj["image_key"]?.jsonPrimitive?.contentOrNull,
+                            likesCount = obj["likes_count"]?.jsonPrimitive?.intOrNull ?: 0,
+                            createdAt = obj["created_at"]?.jsonPrimitive?.content ?: return@mapNotNull null,
+                            username = profile?.get("username")?.jsonPrimitive?.contentOrNull,
+                            avatarUrl = profile?.get("avatar_url")?.jsonPrimitive?.contentOrNull,
+                            bio = profile?.get("bio")?.jsonPrimitive?.contentOrNull
                         )
                     } catch (e: Exception) {
                         Log.e("TweetViewModel", "Error parsing tweet", e)
@@ -162,7 +159,8 @@ class TweetViewModel(
                             this.contentType = contentType
                         }
 
-                    imageUrl = uploadResult.url
+                    // Fix localhost URL for Android emulator
+                    imageUrl = uploadResult.url?.replace("localhost", "10.0.2.2")
                     imageKey = uploadResult.key
                 }
 

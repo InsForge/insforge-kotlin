@@ -39,7 +39,14 @@ class ProfileViewModel(
     val isFollowing: StateFlow<Boolean> = _isFollowing.asStateFlow()
 
     init {
-        loadCurrentProfile()
+        // Load current profile when user is authenticated
+        viewModelScope.launch {
+            client.auth.currentUser.collect { user ->
+                if (user != null && _currentProfile.value == null) {
+                    loadCurrentProfile()
+                }
+            }
+        }
     }
 
     fun loadCurrentProfile() {
@@ -144,7 +151,8 @@ class ProfileViewModel(
                             this.contentType = contentType
                         }
 
-                    avatarUrl = uploadResult.url
+                    // Fix localhost URL for Android emulator
+                    avatarUrl = uploadResult.url?.replace("localhost", "10.0.2.2")
                     avatarKey = uploadResult.key
                 }
 

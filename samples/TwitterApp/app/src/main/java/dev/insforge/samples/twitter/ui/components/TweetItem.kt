@@ -79,7 +79,8 @@ fun TweetItem(
                     // Avatar
                     if (tweet.avatarUrl != null) {
                         AsyncImage(
-                            model = tweet.avatarUrl,
+                            // Fix localhost URL for Android emulator
+                            model = tweet.avatarUrl.replace("localhost", "10.0.2.2"),
                             contentDescription = "Avatar",
                             modifier = Modifier
                                 .size(48.dp)
@@ -139,7 +140,8 @@ fun TweetItem(
             if (tweet.imageUrl != null) {
                 Spacer(modifier = Modifier.height(12.dp))
                 AsyncImage(
-                    model = tweet.imageUrl,
+                    // Fix localhost URL for Android emulator
+                    model = tweet.imageUrl.replace("localhost", "10.0.2.2"),
                     contentDescription = "Tweet image",
                     modifier = Modifier
                         .fillMaxWidth()

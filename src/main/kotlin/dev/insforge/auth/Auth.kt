@@ -147,6 +147,8 @@ class Auth internal constructor(
             result.accessToken?.let { token ->
                 _currentSession.value = Session(result.user, token)
                 _currentUser.value = result.user
+                // Persist session if configured
+                saveSession(result.user, token)
             }
         }
     }
@@ -170,6 +172,8 @@ class Auth internal constructor(
         return handleAuthResponse<SignInResponse>(response).also { result ->
             _currentSession.value = Session(result.user, result.accessToken)
             _currentUser.value = result.user
+            // Persist session if configured
+            saveSession(result.user, result.accessToken)
         }
     }
 
@@ -213,6 +217,8 @@ class Auth internal constructor(
         return handleAuthResponse<VerifyEmailResponse>(response).also { result ->
             _currentSession.value = Session(result.user, result.accessToken)
             _currentUser.value = result.user
+            // Persist session if configured
+            saveSession(result.user, result.accessToken)
         }
     }
 

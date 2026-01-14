@@ -23,11 +23,22 @@ class AuthViewModel(private val client: InsforgeClient) : ViewModel() {
     private val _error = MutableStateFlow<String?>(null)
     val error: StateFlow<String?> = _error.asStateFlow()
 
+    // Track whether we've finished checking for a persisted session
+    private val _isSessionLoading = MutableStateFlow(true)
+    val isSessionLoading: StateFlow<Boolean> = _isSessionLoading.asStateFlow()
+
     init {
         // Observe auth state changes
         viewModelScope.launch {
             client.auth.currentUser.collect { user ->
                 _currentUser.value = user
+                // Session loading is complete once we get the first user state
+                if (_isSessionLoading.value) {
+                    _isSessionLoading.value = false
+                    if (user != null) {
+                        Log.d("AuthViewModel", "Session restored: ${user.email}")
+                    }
+                }
             }
         }
     }

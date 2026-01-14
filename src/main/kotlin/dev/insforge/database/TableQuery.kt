@@ -6,6 +6,7 @@ import io.ktor.client.request.*
 import io.ktor.client.statement.*
 import io.ktor.http.*
 import kotlinx.serialization.json.*
+import kotlinx.serialization.serializer
 
 /**
  * Count algorithm types for database queries.
@@ -179,9 +180,27 @@ class TableQuery @PublishedApi internal constructor(
     }
 
     /**
-     * Execute SELECT query
+     * Execute SELECT query and deserialize results to the specified type.
+     *
+     * Note: T must be a @Serializable class. For untyped access, use [executeRaw].
+     *
+     * @param T The type to deserialize each row to (must be @Serializable)
+     * @return List of deserialized records
+     * @throws IllegalArgumentException if T is not a @Serializable type
      */
     suspend inline fun <reified T> execute(): List<T> {
+        // Verify T is serializable at runtime with clear error message
+        try {
+            serializer<T>()
+        } catch (e: Exception) {
+            throw IllegalArgumentException(
+                "Type '${T::class.simpleName}' is not @Serializable. " +
+                "Either add @Serializable annotation to your data class, " +
+                "or use executeRaw() for untyped/dynamic queries.",
+                e
+            )
+        }
+
         val response = client.httpClient.get("$baseUrl/records/$tableName") {
             selectColumns?.let { parameter("select", it) }
             orderBy?.let { parameter("order", it) }
@@ -194,6 +213,57 @@ class TableQuery @PublishedApi internal constructor(
 
         val database = client.plugin<Database>(Database.key)
         return database.handleResponse(response)
+    }
+
+    /**
+     * Execute SELECT query and return raw JSON array.
+     *
+     * Use this method when you need to work with dynamic/untyped data,
+     * such as queries with joins that return nested objects.
+     *
+     * Example:
+     * ```kotlin
+     * val result = client.database
+     *     .from("tweets")
+     *     .select("id,content,profiles!tweets_user_id_fkey(username)")
+     *     .executeRaw()
+     *
+     * result.forEach { element ->
+     *     val obj = element.jsonObject
+     *     val id = obj["id"]?.jsonPrimitive?.content
+     *     val profile = obj["profiles"]?.jsonObject
+     *     val username = profile?.get("username")?.jsonPrimitive?.content
+     * }
+     * ```
+     *
+     * @return JsonArray containing the query results
+     */
+    suspend fun executeRaw(): JsonArray {
+        val response = client.httpClient.get("$baseUrl/records/$tableName") {
+            selectColumns?.let { parameter("select", it) }
+            orderBy?.let { parameter("order", it) }
+            limitValue?.let { parameter("limit", it) }
+            offsetValue?.let { parameter("offset", it) }
+            filters.forEach { (column, filter) ->
+                parameter(column, filter)
+            }
+        }
+
+        return when (response.status) {
+            HttpStatusCode.OK, HttpStatusCode.Created -> {
+                val bodyText = response.bodyAsText()
+                if (bodyText.isBlank()) {
+                    JsonArray(emptyList())
+                } else {
+                    Json.parseToJsonElement(bodyText).jsonArray
+                }
+            }
+            HttpStatusCode.NoContent -> JsonArray(emptyList())
+            else -> {
+                val errorBody = response.bodyAsText()
+                throw Exception("Database query failed: ${response.status} - $errorBody")
+            }
+        }
     }
 
     /**

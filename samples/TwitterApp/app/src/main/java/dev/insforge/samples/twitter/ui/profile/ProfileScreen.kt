@@ -78,70 +78,106 @@ fun ProfileScreen(
             )
         }
     ) { padding ->
-        if (isLoading && profile == null) {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(padding),
-                contentAlignment = Alignment.Center
-            ) {
-                CircularProgressIndicator()
+        when {
+            isLoading && profile == null -> {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(padding),
+                    contentAlignment = Alignment.Center
+                ) {
+                    CircularProgressIndicator()
+                }
             }
-        } else if (profile != null) {
-            LazyColumn(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(padding)
-            ) {
-                item {
-                    ProfileHeader(
-                        profile = profile,
-                        isOwnProfile = isOwnProfile,
-                        isFollowing = isFollowing,
-                        onEditClick = { showEditDialog = true },
-                        onFollowClick = {
-                            if (!isOwnProfile && userId != null) {
-                                profileViewModel.toggleFollow(userId)
+            profile != null -> {
+                LazyColumn(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(padding)
+                ) {
+                    item {
+                        ProfileHeader(
+                            profile = profile,
+                            isOwnProfile = isOwnProfile,
+                            isFollowing = isFollowing,
+                            onEditClick = { showEditDialog = true },
+                            onFollowClick = {
+                                if (!isOwnProfile && userId != null) {
+                                    profileViewModel.toggleFollow(userId)
+                                }
+                            }
+                        )
+                    }
+
+                    item {
+                        HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+                        Text(
+                            text = "Tweets",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
+                        )
+                    }
+
+                    items(userTweets, key = { it.id ?: "" }) { tweet ->
+                        dev.insforge.samples.twitter.ui.components.TweetItem(
+                            tweet = dev.insforge.samples.twitter.data.TweetWithProfile(
+                                id = tweet.id ?: "",
+                                userId = tweet.userId,
+                                content = tweet.content,
+                                imageUrl = tweet.imageUrl,
+                                imageKey = tweet.imageKey,
+                                likesCount = tweet.likesCount,
+                                createdAt = tweet.createdAt ?: "",
+                                username = profile.username,
+                                avatarUrl = profile.avatarUrl,
+                                bio = profile.bio
+                            ),
+                            isLiked = likedTweetIds.contains(tweet.id),
+                            isOwner = isOwnProfile,
+                            onLikeClick = {
+                                tweet.id?.let { tweetViewModel.toggleLike(it) }
+                            },
+                            onDeleteClick = {
+                                tweet.id?.let { tweetViewModel.deleteTweet(it, tweet.imageKey) }
+                            },
+                            onProfileClick = { },
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                        )
+                    }
+                }
+            }
+            else -> {
+                // Profile not found or error state
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(padding),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(16.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Person,
+                            contentDescription = "No profile",
+                            modifier = Modifier.size(64.dp),
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Text(
+                            text = "Profile not found",
+                            style = MaterialTheme.typography.titleMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        if (isOwnProfile) {
+                            Button(
+                                onClick = { profileViewModel.loadCurrentProfile() }
+                            ) {
+                                Text("Retry")
                             }
                         }
-                    )
-                }
-
-                item {
-                    Divider(modifier = Modifier.padding(vertical = 8.dp))
-                    Text(
-                        text = "Tweets",
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold,
-                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
-                    )
-                }
-
-                items(userTweets, key = { it.id ?: "" }) { tweet ->
-                    dev.insforge.samples.twitter.ui.components.TweetItem(
-                        tweet = dev.insforge.samples.twitter.data.TweetWithProfile(
-                            id = tweet.id ?: "",
-                            userId = tweet.userId,
-                            content = tweet.content,
-                            imageUrl = tweet.imageUrl,
-                            imageKey = tweet.imageKey,
-                            likesCount = tweet.likesCount,
-                            createdAt = tweet.createdAt ?: "",
-                            username = profile.username,
-                            avatarUrl = profile.avatarUrl,
-                            bio = profile.bio
-                        ),
-                        isLiked = likedTweetIds.contains(tweet.id),
-                        isOwner = isOwnProfile,
-                        onLikeClick = {
-                            tweet.id?.let { tweetViewModel.toggleLike(it) }
-                        },
-                        onDeleteClick = {
-                            tweet.id?.let { tweetViewModel.deleteTweet(it, tweet.imageKey) }
-                        },
-                        onProfileClick = { },
-                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
-                    )
+                    }
                 }
             }
         }
@@ -169,7 +205,8 @@ private fun ProfileHeader(
             // Avatar
             if (profile.avatarUrl != null) {
                 AsyncImage(
-                    model = profile.avatarUrl,
+                    // Fix localhost URL for Android emulator
+                    model = profile.avatarUrl.replace("localhost", "10.0.2.2"),
                     contentDescription = "Avatar",
                     modifier = Modifier
                         .size(80.dp)
@@ -296,7 +333,8 @@ private fun EditProfileDialog(
                 // Avatar preview
                 if (selectedAvatarUri != null || profile.avatarUrl != null) {
                     AsyncImage(
-                        model = selectedAvatarUri ?: profile.avatarUrl,
+                        // Fix localhost URL for Android emulator
+                        model = selectedAvatarUri ?: profile.avatarUrl?.replace("localhost", "10.0.2.2"),
                         contentDescription = "Avatar",
                         modifier = Modifier
                             .size(80.dp)
