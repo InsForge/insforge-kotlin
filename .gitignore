@@ -29,6 +29,7 @@ test-results/
 samples/**/build/
 samples/**/.gradle/
 samples/**/.idea/
+samples/**/.mcp.json
 
 # Documentation (auto-generated)
 docs/
