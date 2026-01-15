@@ -62,7 +62,7 @@ android {
 
 dependencies {
     // InsForge SDK (use local project or published artifact)
-    implementation(files("../../../build/libs/insforge-kotlin-0.1.0-SNAPSHOT.jar"))
+    implementation(files("../../../build/libs/insforge-kotlin-0.1.2.jar"))
 
     // Kotlin & Coroutines
     implementation("org.jetbrains.kotlin:kotlin-stdlib:1.9.22")

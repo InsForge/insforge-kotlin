@@ -101,6 +101,36 @@ class AuthViewModel : ViewModel() {
     }
 
     /**
+     * Start OAuth flow with Google provider
+     */
+    fun signInWithGoogle() {
+        viewModelScope.launch {
+            try {
+                auth.signInWithOAuthPage("google", InsforgeManager.OAUTH_CALLBACK_URL)
+            } catch (e: Exception) {
+                _authState.value = _authState.value.copy(
+                    error = e.message ?: "Failed to start Google OAuth"
+                )
+            }
+        }
+    }
+
+    /**
+     * Start OAuth flow with GitHub provider
+     */
+    fun signInWithGitHub() {
+        viewModelScope.launch {
+            try {
+                auth.signInWithOAuthPage("github", InsforgeManager.OAUTH_CALLBACK_URL)
+            } catch (e: Exception) {
+                _authState.value = _authState.value.copy(
+                    error = e.message ?: "Failed to start GitHub OAuth"
+                )
+            }
+        }
+    }
+
+    /**
      * Handle OAuth callback URL
      */
     fun handleOAuthCallback(url: String) {

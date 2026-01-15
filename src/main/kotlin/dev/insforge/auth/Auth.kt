@@ -288,6 +288,78 @@ class Auth internal constructor(
     }
 
     /**
+     * Sign in with a specific OAuth provider.
+     *
+     * Opens the OAuth provider's authentication page in the system browser.
+     * After successful authentication, the user will be redirected to your callback URL.
+     *
+     * Flow:
+     * 1. App calls signInWithOAuthProvider(provider, redirectUri)
+     * 2. SDK fetches the OAuth authorization URL from InsForge
+     * 3. SDK automatically opens the OAuth URL in system browser
+     * 4. User authenticates with the provider (Google, GitHub, etc.)
+     * 5. Provider redirects to InsForge, then InsForge redirects to your callback URL
+     * 6. Android intercepts callback URL (via Custom URL Scheme or App Links)
+     * 7. App calls handleAuthCallback(url)
+     * 8. SDK creates session, updates auth state, and persists token
+     *
+     * @param provider OAuth provider name (e.g., "google", "github", "discord")
+     * @param redirectUri Callback URL where InsForge will redirect after authentication.
+     *                    Can be a custom URL scheme (e.g., "yourapp://auth/callback")
+     *                    or an App Link (e.g., "https://yourdomain.com/auth/callback")
+     * @return The OAuth authorization URL (also opens in browser if browserLauncher is configured)
+     * @throws IllegalStateException if browserLauncher is not configured
+     *
+     * Example (Android):
+     * ```kotlin
+     * // Configure browserLauncher when creating the client
+     * val client = createInsforgeClient(baseURL, anonKey) {
+     *     install(Auth) {
+     *         browserLauncher = BrowserLauncher { url ->
+     *             val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url))
+     *             context.startActivity(intent)
+     *         }
+     *         persistSession = true
+     *         sessionStorage = mySessionStorage
+     *     }
+     * }
+     *
+     * // Start OAuth flow with Google
+     * lifecycleScope.launch {
+     *     val authUrl = client.auth.signInWithOAuthProvider("google", "yourapp://auth/callback")
+     *     // Browser opens automatically
+     * }
+     *
+     * // Handle callback in your Activity
+     * override fun onNewIntent(intent: Intent?) {
+     *     super.onNewIntent(intent)
+     *     intent?.data?.let { uri ->
+     *         lifecycleScope.launch {
+     *             val result = client.auth.handleAuthCallback(uri.toString())
+     *             // User is now authenticated
+     *         }
+     *     }
+     * }
+     * ```
+     */
+    suspend fun signInWithOAuthPage(provider: String, redirectUri: String): String {
+        val launcher = config.browserLauncher
+            ?: throw IllegalStateException(
+                "browserLauncher is not configured. Please configure it when installing the Auth module:\n" +
+                "install(Auth) {\n" +
+                "    browserLauncher = BrowserLauncher { url ->\n" +
+                "        // Open URL in system browser\n" +
+                "    }\n" +
+                "}"
+            )
+
+        val authUrl = getOAuthUrl(provider, redirectUri)
+        launcher.launch(authUrl)
+
+        return authUrl
+    }
+
+    /**
      * Open InsForge's hosted authentication page in the system browser.
      *
      * This page supports both OAuth providers (Google, GitHub, Discord, etc.)

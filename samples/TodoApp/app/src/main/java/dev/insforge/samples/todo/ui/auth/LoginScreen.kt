@@ -25,6 +25,8 @@ fun LoginScreen(
     onSignIn: (email: String, password: String) -> Unit,
     onSignUp: (email: String, password: String, name: String?) -> Unit,
     onSignInWithOAuth: () -> Unit,
+    onSignInWithGoogle: () -> Unit,
+    onSignInWithGitHub: () -> Unit,
     onClearError: () -> Unit
 ) {
     var email by remember { mutableStateOf("") }
@@ -185,7 +187,33 @@ fun LoginScreen(
 
         Spacer(modifier = Modifier.height(24.dp))
 
-        // OAuth button
+        // Google OAuth button
+        OutlinedButton(
+            onClick = onSignInWithGoogle,
+            enabled = !authState.isLoading,
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(50.dp)
+        ) {
+            Text("Continue with Google")
+        }
+
+        Spacer(modifier = Modifier.height(12.dp))
+
+        // GitHub OAuth button
+        OutlinedButton(
+            onClick = onSignInWithGitHub,
+            enabled = !authState.isLoading,
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(50.dp)
+        ) {
+            Text("Continue with GitHub")
+        }
+
+        Spacer(modifier = Modifier.height(12.dp))
+
+        // Generic OAuth button (InsForge hosted page)
         OutlinedButton(
             onClick = onSignInWithOAuth,
             enabled = !authState.isLoading,

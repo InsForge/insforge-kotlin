@@ -53,6 +53,8 @@ fun TodoApp(
                 onSignIn = authViewModel::signIn,
                 onSignUp = authViewModel::signUp,
                 onSignInWithOAuth = authViewModel::signInWithOAuth,
+                onSignInWithGoogle = authViewModel::signInWithGoogle,
+                onSignInWithGitHub = authViewModel::signInWithGitHub,
                 onClearError = authViewModel::clearError
             )
         }
@@ -63,6 +65,8 @@ fun TodoApp(
                 onSignIn = authViewModel::signIn,
                 onSignUp = authViewModel::signUp,
                 onSignInWithOAuth = authViewModel::signInWithOAuth,
+                onSignInWithGoogle = authViewModel::signInWithGoogle,
+                onSignInWithGitHub = authViewModel::signInWithGitHub,
                 onClearError = authViewModel::clearError
             )
         }
