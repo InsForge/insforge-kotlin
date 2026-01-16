@@ -35,13 +35,14 @@ import kotlinx.serialization.json.JsonElement
  * ```
  */
 class Database internal constructor(
-    private val client: InsforgeClient,
+    @PublishedApi internal val client: InsforgeClient,
     private val config: DatabaseConfig
 ) : InsforgePlugin<DatabaseConfig> {
 
     override val key: String = Database.key
 
-    private val baseUrl = "${client.baseURL}/api/database"
+    @PublishedApi
+    internal val baseUrl = "${client.baseURL}/api/database"
 
     /**
      * Start a query on a table
@@ -50,6 +51,61 @@ class Database internal constructor(
      */
     fun from(tableName: String): TableQuery {
         return TableQuery(client, baseUrl, tableName)
+    }
+
+    // ============ RPC (Remote Procedure Call) ============
+
+    /**
+     * Call a PostgreSQL function (RPC)
+     *
+     * @param functionName Name of the database function to call
+     * @param args Optional parameters to pass to the function
+     * @return Result of the function call as the specified type
+     *
+     * @example
+     * ```kotlin
+     * // Call a function with parameters
+     * val stats = client.database.rpc<UserStats>("get_user_stats", mapOf("user_id" to 123))
+     *
+     * // Call a function with no parameters
+     * val users = client.database.rpc<List<User>>("get_all_active_users")
+     *
+     * // Call a function that returns a single value
+     * val count = client.database.rpc<Int>("count_active_posts")
+     * ```
+     */
+    suspend inline fun <reified T> rpc(
+        functionName: String,
+        args: Map<String, Any?>? = null
+    ): T {
+        val response = if (args.isNullOrEmpty()) {
+            // Use GET for functions without parameters
+            client.httpClient.get("$baseUrl/rpc/$functionName")
+        } else {
+            // Use POST for functions with parameters
+            client.httpClient.post("$baseUrl/rpc/$functionName") {
+                contentType(ContentType.Application.Json)
+                setBody(args)
+            }
+        }
+        return handleResponse(response)
+    }
+
+    /**
+     * Call a PostgreSQL function (RPC) and return raw JSON
+     *
+     * Use this when you don't want to deserialize to a specific type,
+     * or when the return type is dynamic.
+     *
+     * @param functionName Name of the database function to call
+     * @param args Optional parameters to pass to the function
+     * @return Result of the function call as JsonElement
+     */
+    suspend fun rpcRaw(
+        functionName: String,
+        args: Map<String, Any?>? = null
+    ): JsonElement {
+        return rpc(functionName, args)
     }
 
     // ============ Table Management (Admin) ============
