@@ -2,6 +2,7 @@ package dev.insforge.samples.todo.viewmodel
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import dev.insforge.auth.OAuthProvider
 import dev.insforge.auth.auth
 import dev.insforge.exceptions.InsforgeHttpException
 import dev.insforge.samples.todo.data.AuthState
@@ -106,7 +107,7 @@ class AuthViewModel : ViewModel() {
     fun signInWithGoogle() {
         viewModelScope.launch {
             try {
-                auth.signInWithOAuthPage("google", InsforgeManager.OAUTH_CALLBACK_URL)
+                auth.signInWithOAuthPage(OAuthProvider.GOOGLE, InsforgeManager.OAUTH_CALLBACK_URL)
             } catch (e: Exception) {
                 _authState.value = _authState.value.copy(
                     error = e.message ?: "Failed to start Google OAuth"
@@ -121,7 +122,7 @@ class AuthViewModel : ViewModel() {
     fun signInWithGitHub() {
         viewModelScope.launch {
             try {
-                auth.signInWithOAuthPage("github", InsforgeManager.OAUTH_CALLBACK_URL)
+                auth.signInWithOAuthPage(OAuthProvider.GITHUB, InsforgeManager.OAUTH_CALLBACK_URL)
             } catch (e: Exception) {
                 _authState.value = _authState.value.copy(
                     error = e.message ?: "Failed to start GitHub OAuth"

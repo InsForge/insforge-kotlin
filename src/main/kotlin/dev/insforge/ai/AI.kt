@@ -70,6 +70,9 @@ class AI internal constructor(
      * @param maxTokens Maximum tokens to generate
      * @param topP Nucleus sampling parameter
      * @param systemPrompt Optional system prompt
+     * @param webSearch Web search plugin configuration for real-time information
+     * @param fileParser File parser plugin configuration for PDF processing
+     * @param thinking Enable extended reasoning capabilities (only works with Anthropic models with :thinking suffix)
      */
     suspend fun chatCompletion(
         model: String,
@@ -78,7 +81,10 @@ class AI internal constructor(
         temperature: Double? = null,
         maxTokens: Int? = null,
         topP: Double? = null,
-        systemPrompt: String? = null
+        systemPrompt: String? = null,
+        webSearch: WebSearchPlugin? = null,
+        fileParser: FileParserPlugin? = null,
+        thinking: Boolean? = null
     ): ChatCompletionResponse {
         val response = client.httpClient.post("$baseUrl/chat/completion") {
             contentType(ContentType.Application.Json)
@@ -89,10 +95,79 @@ class AI internal constructor(
                 temperature = temperature,
                 maxTokens = maxTokens,
                 topP = topP,
-                systemPrompt = systemPrompt
+                systemPrompt = systemPrompt,
+                webSearch = webSearch,
+                fileParser = fileParser,
+                thinking = thinking
             ))
         }
         return handleResponse(response)
+    }
+
+    /**
+     * Generate chat completion with web search enabled
+     *
+     * @param model Model identifier (e.g., "openai/gpt-4")
+     * @param messages List of chat messages
+     * @param engine Search engine (NATIVE or EXA, null for auto-select)
+     * @param maxResults Maximum number of search results (1-10, default 5)
+     * @param searchPrompt Custom prompt for attaching search results
+     * @param temperature Controls randomness (0-2)
+     * @param maxTokens Maximum tokens to generate
+     * @param systemPrompt Optional system prompt
+     */
+    suspend fun chatCompletionWithWebSearch(
+        model: String,
+        messages: List<ChatMessage>,
+        engine: WebSearchEngine? = null,
+        maxResults: Int? = null,
+        searchPrompt: String? = null,
+        temperature: Double? = null,
+        maxTokens: Int? = null,
+        systemPrompt: String? = null
+    ): ChatCompletionResponse {
+        return chatCompletion(
+            model = model,
+            messages = messages,
+            temperature = temperature,
+            maxTokens = maxTokens,
+            systemPrompt = systemPrompt,
+            webSearch = WebSearchPlugin(
+                enabled = true,
+                engine = engine,
+                maxResults = maxResults,
+                searchPrompt = searchPrompt
+            )
+        )
+    }
+
+    /**
+     * Generate chat completion with extended reasoning (thinking mode)
+     *
+     * Note: Only works with Anthropic models. The :thinking suffix will be appended
+     * to the model ID if not already present.
+     *
+     * @param model Model identifier (e.g., "anthropic/claude-3.5-sonnet")
+     * @param messages List of chat messages
+     * @param temperature Controls randomness (0-2)
+     * @param maxTokens Maximum tokens to generate
+     * @param systemPrompt Optional system prompt
+     */
+    suspend fun chatCompletionWithThinking(
+        model: String,
+        messages: List<ChatMessage>,
+        temperature: Double? = null,
+        maxTokens: Int? = null,
+        systemPrompt: String? = null
+    ): ChatCompletionResponse {
+        return chatCompletion(
+            model = model,
+            messages = messages,
+            temperature = temperature,
+            maxTokens = maxTokens,
+            systemPrompt = systemPrompt,
+            thinking = true
+        )
     }
 
     /**
@@ -104,6 +179,9 @@ class AI internal constructor(
      * @param maxTokens Maximum tokens to generate
      * @param topP Nucleus sampling parameter
      * @param systemPrompt Optional system prompt
+     * @param webSearch Web search plugin configuration
+     * @param fileParser File parser plugin configuration
+     * @param thinking Enable extended reasoning capabilities
      * @return Flow of streaming chunks
      */
     fun chatCompletionStream(
@@ -112,7 +190,10 @@ class AI internal constructor(
         temperature: Double? = null,
         maxTokens: Int? = null,
         topP: Double? = null,
-        systemPrompt: String? = null
+        systemPrompt: String? = null,
+        webSearch: WebSearchPlugin? = null,
+        fileParser: FileParserPlugin? = null,
+        thinking: Boolean? = null
     ): Flow<String> = flow {
         val response = client.httpClient.post("$baseUrl/chat/completion") {
             contentType(ContentType.Application.Json)
@@ -123,7 +204,10 @@ class AI internal constructor(
                 temperature = temperature,
                 maxTokens = maxTokens,
                 topP = topP,
-                systemPrompt = systemPrompt
+                systemPrompt = systemPrompt,
+                webSearch = webSearch,
+                fileParser = fileParser,
+                thinking = thinking
             ))
         }
 

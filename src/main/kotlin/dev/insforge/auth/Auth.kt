@@ -20,6 +20,26 @@ import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 
 /**
+ * Supported OAuth providers for authentication.
+ *
+ * Use these providers with [Auth.signInWithOAuthPage] to initiate
+ * OAuth authentication flow with the specified provider.
+ */
+enum class OAuthProvider(val value: String) {
+    GOOGLE("google"),
+    GITHUB("github"),
+    DISCORD("discord"),
+    LINKEDIN("linkedin"),
+    FACEBOOK("facebook"),
+    INSTAGRAM("instagram"),
+    TIKTOK("tiktok"),
+    APPLE("apple"),
+    X("x"),
+    SPOTIFY("spotify"),
+    MICROSOFT("microsoft")
+}
+
+/**
  * Authentication module for Insforge
  *
  * Install this module in your Insforge client:
@@ -274,12 +294,12 @@ class Auth internal constructor(
     /**
      * Get OAuth authorization URL
      *
-     * @param provider OAuth provider (google, github, etc.)
+     * @param provider OAuth provider
      * @param redirectUri URL to redirect after authentication
      * @return Authorization URL to redirect user to
      */
-    suspend fun getOAuthUrl(provider: String, redirectUri: String): String {
-        val response = client.httpClient.get("$baseUrl/oauth/$provider") {
+    suspend fun getOAuthUrl(provider: OAuthProvider, redirectUri: String): String {
+        val response = client.httpClient.get("$baseUrl/oauth/${provider.value}") {
             parameter("redirect_uri", redirectUri)
         }
 
@@ -294,7 +314,7 @@ class Auth internal constructor(
      * After successful authentication, the user will be redirected to your callback URL.
      *
      * Flow:
-     * 1. App calls signInWithOAuthProvider(provider, redirectUri)
+     * 1. App calls signInWithOAuthPage(provider, redirectUri)
      * 2. SDK fetches the OAuth authorization URL from InsForge
      * 3. SDK automatically opens the OAuth URL in system browser
      * 4. User authenticates with the provider (Google, GitHub, etc.)
@@ -303,7 +323,7 @@ class Auth internal constructor(
      * 7. App calls handleAuthCallback(url)
      * 8. SDK creates session, updates auth state, and persists token
      *
-     * @param provider OAuth provider name (e.g., "google", "github", "discord")
+     * @param provider OAuth provider (e.g., OAuthProvider.GOOGLE, OAuthProvider.GITHUB)
      * @param redirectUri Callback URL where InsForge will redirect after authentication.
      *                    Can be a custom URL scheme (e.g., "yourapp://auth/callback")
      *                    or an App Link (e.g., "https://yourdomain.com/auth/callback")
@@ -326,7 +346,7 @@ class Auth internal constructor(
      *
      * // Start OAuth flow with Google
      * lifecycleScope.launch {
-     *     val authUrl = client.auth.signInWithOAuthProvider("google", "yourapp://auth/callback")
+     *     val authUrl = client.auth.signInWithOAuthPage(OAuthProvider.GOOGLE, "yourapp://auth/callback")
      *     // Browser opens automatically
      * }
      *
@@ -342,7 +362,7 @@ class Auth internal constructor(
      * }
      * ```
      */
-    suspend fun signInWithOAuthPage(provider: String, redirectUri: String): String {
+    suspend fun signInWithOAuthPage(provider: OAuthProvider, redirectUri: String): String {
         val launcher = config.browserLauncher
             ?: throw IllegalStateException(
                 "browserLauncher is not configured. Please configure it when installing the Auth module:\n" +

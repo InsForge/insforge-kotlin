@@ -1,5 +1,6 @@
 package dev.insforge.ai.models
 
+import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 
 // ============ Chat Models ============
@@ -10,6 +11,66 @@ data class ChatMessage(
     val content: String
 )
 
+// ============ Plugin Models ============
+
+/**
+ * Web search engine options
+ */
+enum class WebSearchEngine {
+    @SerialName("native") NATIVE,
+    @SerialName("exa") EXA
+}
+
+/**
+ * Web search plugin configuration
+ *
+ * @param enabled Enable web search integration
+ * @param engine Search engine selection (native, exa, or null for auto-select)
+ * @param maxResults Maximum number of search results to include (1-10, default 5)
+ * @param searchPrompt Custom prompt for attaching search results to the message
+ */
+@Serializable
+data class WebSearchPlugin(
+    val enabled: Boolean,
+    val engine: WebSearchEngine? = null,
+    val maxResults: Int? = null,
+    val searchPrompt: String? = null
+)
+
+/**
+ * PDF processing engine options
+ */
+enum class PdfEngine {
+    @SerialName("pdf-text") PDF_TEXT,
+    @SerialName("mistral-ocr") MISTRAL_OCR,
+    @SerialName("native") NATIVE
+}
+
+/**
+ * PDF parser configuration
+ *
+ * @param engine PDF processing engine:
+ *   - PDF_TEXT: Best for well-structured PDFs with clear text content (Free)
+ *   - MISTRAL_OCR: Best for scanned documents or PDFs with images ($2 per 1,000 pages)
+ *   - NATIVE: Only for models with native file support (charged as input tokens)
+ */
+@Serializable
+data class PdfParserConfig(
+    val engine: PdfEngine? = null
+)
+
+/**
+ * File parser plugin configuration
+ *
+ * @param enabled Enable file parsing for PDFs in messages
+ * @param pdf PDF-specific configuration
+ */
+@Serializable
+data class FileParserPlugin(
+    val enabled: Boolean,
+    val pdf: PdfParserConfig? = null
+)
+
 @Serializable
 data class ChatCompletionRequest(
     val model: String,
@@ -18,20 +79,46 @@ data class ChatCompletionRequest(
     val temperature: Double? = null,
     val maxTokens: Int? = null,
     val topP: Double? = null,
-    val systemPrompt: String? = null
+    val systemPrompt: String? = null,
+    val webSearch: WebSearchPlugin? = null,
+    val fileParser: FileParserPlugin? = null,
+    val thinking: Boolean? = null
+)
+
+// ============ Response Models ============
+
+/**
+ * URL citation from web search results
+ */
+@Serializable
+data class UrlCitation(
+    val url: String,
+    val title: String? = null,
+    val content: String? = null,
+    val startIndex: Int? = null,
+    val endIndex: Int? = null
+)
+
+/**
+ * Annotation containing URL citation
+ */
+@Serializable
+data class UrlCitationAnnotation(
+    val type: String, // "url_citation"
+    val urlCitation: UrlCitation? = null
 )
 
 @Serializable
 data class ChatCompletionResponse(
-    val success: Boolean,
-    val content: String,
-    val metadata: CompletionMetadata
+    val text: String? = null,
+    val annotations: List<UrlCitationAnnotation>? = null,
+    val metadata: CompletionMetadata? = null
 )
 
 @Serializable
 data class CompletionMetadata(
     val model: String,
-    val usage: TokenUsage
+    val usage: TokenUsage? = null
 )
 
 @Serializable
