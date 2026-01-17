@@ -19,25 +19,8 @@ import kotlinx.coroutines.launch
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 
-/**
- * Supported OAuth providers for authentication.
- *
- * Use these providers with [Auth.signInWithOAuthPage] to initiate
- * OAuth authentication flow with the specified provider.
- */
-enum class OAuthProvider(val value: String) {
-    GOOGLE("google"),
-    GITHUB("github"),
-    DISCORD("discord"),
-    LINKEDIN("linkedin"),
-    FACEBOOK("facebook"),
-    INSTAGRAM("instagram"),
-    TIKTOK("tiktok"),
-    APPLE("apple"),
-    X("x"),
-    SPOTIFY("spotify"),
-    MICROSOFT("microsoft")
-}
+// Re-export OAuthProvider from models for convenience
+typealias OAuthProvider = dev.insforge.auth.models.OAuthProvider
 
 /**
  * Authentication module for Insforge
@@ -67,6 +50,9 @@ class Auth internal constructor(
     private val _currentUser = MutableStateFlow<User?>(null)
     private val _currentSession = MutableStateFlow<Session?>(null)
 
+    // PKCE code verifier for OAuth flow (stored temporarily until exchange)
+    private var pendingPkceVerifier: String? = null
+
     /**
      * Current authenticated user (reactive)
      */
@@ -83,7 +69,7 @@ class Auth internal constructor(
 
     companion object : InsforgePluginProvider<AuthConfig, Auth> {
         override val key: String = "auth"
-        private const val SESSION_KEY = "insforge_session"
+        private const val REFRESH_TOKEN_KEY = "insforge_refresh_token"
         private const val USER_KEY = "insforge_user"
 
         override fun createConfig(configure: AuthConfig.() -> Unit): AuthConfig {
@@ -101,20 +87,36 @@ class Auth internal constructor(
     }
 
     /**
-     * Restore session from persistent storage
+     * Restore session from persistent storage.
+     *
+     * Only refreshToken and user are persisted. On restore, we automatically
+     * refresh to get a new accessToken.
      */
     private fun restoreSession() {
         scope.launch {
             try {
                 val storage = config.sessionStorage ?: return@launch
-                val sessionJson = storage.get(SESSION_KEY) ?: return@launch
+                val refreshToken = storage.get(REFRESH_TOKEN_KEY) ?: return@launch
                 val userJson = storage.get(USER_KEY) ?: return@launch
 
-                val accessToken = sessionJson
                 val user = json.decodeFromString<User>(userJson)
-
-                _currentSession.value = Session(user, accessToken)
                 _currentUser.value = user
+
+                // Try to refresh the access token
+                try {
+                    val result = refreshAccessTokenInternal(refreshToken)
+                    _currentSession.value = Session(result.user, result.accessToken, result.refreshToken)
+                    _currentUser.value = result.user
+
+                    // Update stored refresh token if a new one was returned
+                    result.refreshToken?.let { newRefreshToken ->
+                        storage.save(REFRESH_TOKEN_KEY, newRefreshToken)
+                    }
+                    storage.save(USER_KEY, json.encodeToString(result.user))
+                } catch (e: Exception) {
+                    // Refresh failed, clear stored session
+                    clearPersistedSession()
+                }
             } catch (e: Exception) {
                 // Ignore restore errors - session will just be null
             }
@@ -122,13 +124,20 @@ class Auth internal constructor(
     }
 
     /**
-     * Save session to persistent storage
+     * Save session to persistent storage.
+     *
+     * Only refreshToken and user are persisted. accessToken is kept in memory only.
      */
-    private suspend fun saveSession(user: User, accessToken: String) {
+    private suspend fun saveSession(user: User, accessToken: String, refreshToken: String?) {
+        // Always update in-memory session
+        _currentSession.value = Session(user, accessToken, refreshToken)
+        _currentUser.value = user
+
+        // Persist refreshToken and user if configured
         if (!config.persistSession) return
         val storage = config.sessionStorage ?: return
 
-        storage.save(SESSION_KEY, accessToken)
+        refreshToken?.let { storage.save(REFRESH_TOKEN_KEY, it) }
         storage.save(USER_KEY, json.encodeToString(user))
     }
 
@@ -139,7 +148,7 @@ class Auth internal constructor(
         if (!config.persistSession) return
         val storage = config.sessionStorage ?: return
 
-        storage.remove(SESSION_KEY)
+        storage.remove(REFRESH_TOKEN_KEY)
         storage.remove(USER_KEY)
     }
 
@@ -159,16 +168,16 @@ class Auth internal constructor(
         name: String? = null
     ): SignUpResponse {
         val response = client.httpClient.post("$baseUrl/users") {
+            parameter("client_type", config.clientType.value)
             contentType(ContentType.Application.Json)
             setBody(SignUpRequest(email, password, name))
         }
 
         return handleAuthResponse<SignUpResponse>(response).also { result ->
-            result.accessToken?.let { token ->
-                _currentSession.value = Session(result.user, token)
-                _currentUser.value = result.user
-                // Persist session if configured
-                saveSession(result.user, token)
+            result.user?.let { user ->
+                result.accessToken?.let { token ->
+                    saveSession(user, token, result.refreshToken)
+                }
             }
         }
     }
@@ -185,15 +194,13 @@ class Auth internal constructor(
         password: String
     ): SignInResponse {
         val response = client.httpClient.post("$baseUrl/sessions") {
+            parameter("client_type", config.clientType.value)
             contentType(ContentType.Application.Json)
             setBody(SignInRequest(email, password))
         }
 
         return handleAuthResponse<SignInResponse>(response).also { result ->
-            _currentSession.value = Session(result.user, result.accessToken)
-            _currentUser.value = result.user
-            // Persist session if configured
-            saveSession(result.user, result.accessToken)
+            saveSession(result.user, result.accessToken, result.refreshToken)
         }
     }
 
@@ -230,15 +237,13 @@ class Auth internal constructor(
      */
     suspend fun verifyEmail(otp: String, email: String? = null): VerifyEmailResponse {
         val response = client.httpClient.post("$baseUrl/email/verify") {
+            parameter("client_type", config.clientType.value)
             contentType(ContentType.Application.Json)
             setBody(VerifyEmailRequest(email, otp))
         }
 
         return handleAuthResponse<VerifyEmailResponse>(response).also { result ->
-            _currentSession.value = Session(result.user, result.accessToken)
-            _currentUser.value = result.user
-            // Persist session if configured
-            saveSession(result.user, result.accessToken)
+            saveSession(result.user, result.accessToken, result.refreshToken)
         }
     }
 
@@ -289,18 +294,63 @@ class Auth internal constructor(
         handleAuthResponse<Unit>(response)
     }
 
+    // ============ Token Refresh ============
+
+    /**
+     * Refresh the access token using the stored refresh token.
+     *
+     * This is called automatically when:
+     * - The session is restored from storage
+     * - An API call returns 401 Unauthorized (auto-retry)
+     *
+     * You can also call this manually to proactively refresh the token.
+     *
+     * @return RefreshTokenResponse with new access token and optionally new refresh token
+     * @throws IllegalStateException if no refresh token is available
+     */
+    suspend fun refreshAccessToken(): RefreshTokenResponse {
+        val refreshToken = _currentSession.value?.refreshToken
+            ?: config.sessionStorage?.get(REFRESH_TOKEN_KEY)
+            ?: throw IllegalStateException("No refresh token available")
+
+        return refreshAccessTokenInternal(refreshToken).also { result ->
+            saveSession(result.user, result.accessToken, result.refreshToken ?: refreshToken)
+        }
+    }
+
+    /**
+     * Internal method to refresh access token.
+     * Does not update session state - caller is responsible for that.
+     */
+    private suspend fun refreshAccessTokenInternal(refreshToken: String): RefreshTokenResponse {
+        val response = client.httpClient.post("$baseUrl/refresh") {
+            parameter("client_type", config.clientType.value)
+            contentType(ContentType.Application.Json)
+            setBody(RefreshTokenRequest(refreshToken))
+        }
+
+        return handleAuthResponse(response)
+    }
+
     // ============ OAuth ============
 
     /**
-     * Get OAuth authorization URL
+     * Get OAuth authorization URL with PKCE challenge.
      *
      * @param provider OAuth provider
      * @param redirectUri URL to redirect after authentication
+     * @param codeChallenge PKCE code challenge (SHA-256 hash of code verifier)
      * @return Authorization URL to redirect user to
      */
-    suspend fun getOAuthUrl(provider: OAuthProvider, redirectUri: String): String {
+    suspend fun getOAuthUrl(
+        provider: OAuthProvider,
+        redirectUri: String,
+        codeChallenge: String
+    ): String {
         val response = client.httpClient.get("$baseUrl/oauth/${provider.value}") {
             parameter("redirect_uri", redirectUri)
+            parameter("code_challenge", codeChallenge)
+            parameter("code_challenge_method", "S256")
         }
 
         val result = handleAuthResponse<OAuthUrlResponse>(response)
@@ -308,20 +358,23 @@ class Auth internal constructor(
     }
 
     /**
-     * Sign in with a specific OAuth provider.
+     * Sign in with a specific OAuth provider using PKCE for security.
      *
      * Opens the OAuth provider's authentication page in the system browser.
-     * After successful authentication, the user will be redirected to your callback URL.
+     * After successful authentication, the user will be redirected to your callback URL
+     * with an exchange code that must be exchanged for tokens using handleAuthCallback().
      *
      * Flow:
      * 1. App calls signInWithOAuthPage(provider, redirectUri)
-     * 2. SDK fetches the OAuth authorization URL from InsForge
-     * 3. SDK automatically opens the OAuth URL in system browser
-     * 4. User authenticates with the provider (Google, GitHub, etc.)
-     * 5. Provider redirects to InsForge, then InsForge redirects to your callback URL
-     * 6. Android intercepts callback URL (via Custom URL Scheme or App Links)
-     * 7. App calls handleAuthCallback(url)
-     * 8. SDK creates session, updates auth state, and persists token
+     * 2. SDK generates PKCE code_verifier and code_challenge
+     * 3. SDK fetches the OAuth authorization URL from InsForge (with code_challenge)
+     * 4. SDK automatically opens the OAuth URL in system browser
+     * 5. User authenticates with the provider (Google, GitHub, etc.)
+     * 6. Provider redirects to InsForge, then InsForge redirects to your callback URL with exchange_code
+     * 7. Android intercepts callback URL (via Custom URL Scheme or App Links)
+     * 8. App calls handleAuthCallback(url)
+     * 9. SDK exchanges the code using code_verifier and receives tokens
+     * 10. SDK creates session, updates auth state, and persists refresh token
      *
      * @param provider OAuth provider (e.g., OAuthProvider.GOOGLE, OAuthProvider.GITHUB)
      * @param redirectUri Callback URL where InsForge will redirect after authentication.
@@ -341,6 +394,7 @@ class Auth internal constructor(
      *         }
      *         persistSession = true
      *         sessionStorage = mySessionStorage
+     *         clientType = ClientType.MOBILE
      *     }
      * }
      *
@@ -373,7 +427,11 @@ class Auth internal constructor(
                 "}"
             )
 
-        val authUrl = getOAuthUrl(provider, redirectUri)
+        // Generate PKCE pair and store verifier for later exchange
+        val pkce = PKCE.generate()
+        pendingPkceVerifier = pkce.codeVerifier
+
+        val authUrl = getOAuthUrl(provider, redirectUri, pkce.codeChallenge)
         launcher.launch(authUrl)
 
         return authUrl
@@ -383,16 +441,18 @@ class Auth internal constructor(
      * Open InsForge's hosted authentication page in the system browser.
      *
      * This page supports both OAuth providers (Google, GitHub, Discord, etc.)
-     * and email+password authentication.
+     * and email+password authentication. Uses PKCE for security.
      *
      * Flow:
      * 1. App calls signInWithDefaultPage(redirectTo:)
-     * 2. SDK automatically opens the authentication URL in system browser
-     * 3. User authenticates (OAuth or email+password)
-     * 4. InsForge redirects to callback URL with parameters
-     * 5. Android intercepts callback URL (via Custom URL Scheme or App Links)
-     * 6. App calls handleAuthCallback(url)
-     * 7. SDK creates session, updates auth state, and persists token
+     * 2. SDK generates PKCE code_verifier and code_challenge
+     * 3. SDK automatically opens the authentication URL in system browser (with code_challenge)
+     * 4. User authenticates (OAuth or email+password)
+     * 5. InsForge redirects to callback URL with exchange_code
+     * 6. Android intercepts callback URL (via Custom URL Scheme or App Links)
+     * 7. App calls handleAuthCallback(url)
+     * 8. SDK exchanges the code using code_verifier and receives tokens
+     * 9. SDK creates session, updates auth state, and persists refresh token
      *
      * @param redirectTo Callback URL where InsForge will redirect after authentication.
      *                   Can be a custom URL scheme (e.g., "yourapp://auth/callback")
@@ -419,6 +479,7 @@ class Auth internal constructor(
      *                 prefs.edit().remove(key).apply()
      *             }
      *         }
+     *         clientType = ClientType.MOBILE
      *     }
      * }
      *
@@ -427,9 +488,6 @@ class Auth internal constructor(
      * ```
      */
     fun signInWithDefaultPage(redirectTo: String): String {
-        val encodedRedirect = java.net.URLEncoder.encode(redirectTo, "UTF-8")
-        val authUrl = "${client.baseURL}/auth/sign-in?redirect=$encodedRedirect"
-
         // Automatically open browser if launcher is configured
         val launcher = config.browserLauncher
             ?: throw IllegalStateException(
@@ -440,6 +498,13 @@ class Auth internal constructor(
                 "    }\n" +
                 "}"
             )
+
+        // Generate PKCE pair and store verifier for later exchange
+        val pkce = PKCE.generate()
+        pendingPkceVerifier = pkce.codeVerifier
+
+        val encodedRedirect = java.net.URLEncoder.encode(redirectTo, "UTF-8")
+        val authUrl = "${client.baseURL}/auth/sign-in?redirect=$encodedRedirect&code_challenge=${pkce.codeChallenge}&code_challenge_method=S256"
         launcher.launch(authUrl)
 
         return authUrl
@@ -449,32 +514,34 @@ class Auth internal constructor(
      * Get the authentication URL without opening the browser.
      *
      * Use this if you want to control when/how to open the browser yourself.
+     * Note: This method also generates and stores a PKCE verifier internally.
      *
      * @param redirectTo Callback URL where InsForge will redirect after authentication.
-     * @return The authentication URL
+     * @return The authentication URL with PKCE code_challenge
      */
     fun getAuthUrl(redirectTo: String): String {
+        // Generate PKCE pair and store verifier for later exchange
+        val pkce = PKCE.generate()
+        pendingPkceVerifier = pkce.codeVerifier
+
         val encodedRedirect = java.net.URLEncoder.encode(redirectTo, "UTF-8")
-        return "${client.baseURL}/auth/sign-in?redirect=$encodedRedirect"
+        return "${client.baseURL}/auth/sign-in?redirect=$encodedRedirect&code_challenge=${pkce.codeChallenge}&code_challenge_method=S256"
     }
 
     /**
      * Handle the callback URL from OAuth/authentication flow.
      *
-     * This method parses the callback URL parameters, creates a session,
-     * and persists the token if session persistence is enabled.
-     * Call this when your app intercepts the redirect URL.
+     * This method extracts the exchange code from the callback URL,
+     * exchanges it for tokens using the stored PKCE code_verifier,
+     * creates a session, and persists the refresh token.
      *
      * Callback URL parameters:
-     * - access_token: JWT access token for API requests
-     * - user_id: User's unique ID
-     * - email: User's email address
-     * - name: User's display name (optional)
-     * - csrf_token: CSRF protection token (optional)
+     * - code: Exchange code to be exchanged for tokens
      *
      * @param callbackUrl The full callback URL intercepted by the app
-     * @return OAuthCallbackResult containing user information and access token
-     * @throws IllegalArgumentException if required parameters are missing
+     * @return OAuthExchangeResponse containing user and tokens
+     * @throws IllegalArgumentException if exchange code is missing
+     * @throws IllegalStateException if PKCE verifier is not available
      *
      * Example (Android):
      * ```kotlin
@@ -486,7 +553,7 @@ class Auth internal constructor(
      *             try {
      *                 val result = client.auth.handleAuthCallback(uri.toString())
      *                 // User is now authenticated
-     *                 println("Authenticated: ${result.email}")
+     *                 println("Authenticated: ${result.user.email}")
      *             } catch (e: Exception) {
      *                 // Handle error
      *             }
@@ -495,44 +562,40 @@ class Auth internal constructor(
      * }
      * ```
      */
-    suspend fun handleAuthCallback(callbackUrl: String): OAuthCallbackResult {
+    suspend fun handleAuthCallback(callbackUrl: String): OAuthExchangeResponse {
         val uri = java.net.URI(callbackUrl)
         val queryParams = parseQueryParams(uri.query ?: uri.fragment ?: "")
 
-        val accessToken = queryParams["access_token"]
-            ?: throw IllegalArgumentException("Missing access_token in callback URL")
-        val userId = queryParams["user_id"]
-            ?: throw IllegalArgumentException("Missing user_id in callback URL")
-        val email = queryParams["email"]
-            ?: throw IllegalArgumentException("Missing email in callback URL")
-        val name = queryParams["name"]
-        val csrfToken = queryParams["csrf_token"]
+        val exchangeCode = queryParams["code"]
+            ?: throw IllegalArgumentException("Missing exchange code in callback URL")
 
-        val result = OAuthCallbackResult(
-            accessToken = accessToken,
-            userId = userId,
-            email = email,
-            name = name,
-            csrfToken = csrfToken
-        )
+        val codeVerifier = pendingPkceVerifier
+            ?: throw IllegalStateException("PKCE verifier not found. Did you call signInWithOAuthPage or signInWithDefaultPage first?")
 
-        // Create a minimal user object and update session state
-        val user = User(
-            id = userId,
-            email = email,
-            metadata = name?.let { mapOf("name" to it) },
-            emailVerified = true,
-            providers = null,
-            createdAt = "",
-            updatedAt = ""
-        )
-        _currentSession.value = Session(user, accessToken)
-        _currentUser.value = user
+        // Clear the pending verifier
+        pendingPkceVerifier = null
 
-        // Persist session if configured
-        saveSession(user, accessToken)
+        // Exchange the code for tokens
+        return exchangeOAuthCode(exchangeCode, codeVerifier)
+    }
 
-        return result
+    /**
+     * Exchange OAuth authorization code for tokens.
+     *
+     * @param code The authorization code from the callback
+     * @param codeVerifier The PKCE code verifier
+     * @return OAuthExchangeResponse with user and tokens
+     */
+    private suspend fun exchangeOAuthCode(code: String, codeVerifier: String): OAuthExchangeResponse {
+        val response = client.httpClient.post("$baseUrl/oauth/exchange") {
+            parameter("client_type", config.clientType.value)
+            contentType(ContentType.Application.Json)
+            setBody(OAuthExchangeRequest(code, codeVerifier))
+        }
+
+        return handleAuthResponse<OAuthExchangeResponse>(response).also { result ->
+            saveSession(result.user, result.accessToken, result.refreshToken)
+        }
     }
 
     private fun parseQueryParams(query: String): Map<String, String> {

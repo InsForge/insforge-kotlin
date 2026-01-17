@@ -2,7 +2,9 @@ package dev.insforge.http
 
 import dev.insforge.InsforgeClient
 import dev.insforge.InsforgeVersion
+import dev.insforge.auth.Auth
 import dev.insforge.logging.InsforgeLogLevel
+import dev.insforge.logging.InsforgeLogger
 import io.ktor.client.*
 import io.ktor.client.engine.okhttp.OkHttp
 import io.ktor.client.plugins.*
@@ -12,12 +14,21 @@ import io.ktor.client.plugins.websocket.*
 import io.ktor.client.request.*
 import io.ktor.http.*
 import io.ktor.serialization.kotlinx.json.*
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.json.Json
 
 /**
  * Factory for creating configured HTTP clients
  */
 object InsforgeHttpClient {
+
+    // Mutex to prevent multiple simultaneous refresh attempts
+    private val refreshMutex = Mutex()
+
+    // Flag to prevent infinite refresh loops
+    private var isRefreshing = false
 
     fun create(insforgeClient: InsforgeClient): HttpClient {
         val config = insforgeClient.config
@@ -70,8 +81,9 @@ object InsforgeHttpClient {
             expectSuccess = false // We'll handle errors manually for better error messages
         }.also { client ->
             // Add request interceptor to dynamically set Authorization header
-            // Uses JWT token if user is logged in, otherwise falls back to anonKey
+            // and handle 401 responses with automatic token refresh
             client.plugin(HttpSend).intercept { request ->
+                // Set Authorization header if not already set
                 if (!request.headers.contains(HttpHeaders.Authorization)) {
                     // Priority: JWT token > custom accessToken provider > anonKey
                     val token = insforgeClient.getCurrentAccessToken()
@@ -81,7 +93,64 @@ object InsforgeHttpClient {
                     request.headers.append(HttpHeaders.Authorization, "Bearer $token")
                 }
 
-                execute(request)
+                val response = execute(request)
+
+                // Handle 401 Unauthorized - try to refresh token and retry
+                if (response.response.status == HttpStatusCode.Unauthorized && !isRefreshing) {
+                    // Check if Auth plugin is installed and has a refresh token
+                    val auth = try {
+                        insforgeClient.pluginManager.getPlugin("auth") as? Auth
+                    } catch (e: Exception) {
+                        null
+                    }
+
+                    val hasRefreshToken = auth?.currentSession?.value?.refreshToken != null
+
+                    if (auth != null && hasRefreshToken) {
+                        // Skip refresh for auth endpoints to prevent infinite loops
+                        val isAuthEndpoint = request.url.encodedPath.contains("/api/auth/")
+                        if (!isAuthEndpoint) {
+                            try {
+                                val refreshSuccessful = refreshMutex.withLock {
+                                    if (isRefreshing) {
+                                        // Another coroutine is already refreshing
+                                        false
+                                    } else {
+                                        isRefreshing = true
+                                        try {
+                                            auth.refreshAccessToken()
+                                            InsforgeLogger.debug("Token refreshed successfully, retrying request", "HTTP")
+                                            true
+                                        } catch (e: Exception) {
+                                            InsforgeLogger.warn("Token refresh failed: ${e.message}", tag = "HTTP")
+                                            false
+                                        } finally {
+                                            isRefreshing = false
+                                        }
+                                    }
+                                }
+
+                                if (refreshSuccessful) {
+                                    // Retry the request with the new token
+                                    val newToken = insforgeClient.getCurrentAccessToken()
+                                    if (newToken != null) {
+                                        // Create a new request with the updated token
+                                        val retryRequest = HttpRequestBuilder().apply {
+                                            takeFrom(request)
+                                            headers.remove(HttpHeaders.Authorization)
+                                            headers.append(HttpHeaders.Authorization, "Bearer $newToken")
+                                        }
+                                        return@intercept execute(retryRequest)
+                                    }
+                                }
+                            } catch (e: Exception) {
+                                InsforgeLogger.warn("Auto-refresh failed: ${e.message}", tag = "HTTP")
+                            }
+                        }
+                    }
+                }
+
+                response
             }
         }
     }

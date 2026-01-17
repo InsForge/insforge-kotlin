@@ -1,6 +1,16 @@
 package dev.insforge.auth
 
 /**
+ * Client type for authentication requests.
+ * Determines how tokens are returned (cookies for web, response body for mobile/desktop).
+ */
+enum class ClientType(val value: String) {
+    WEB("web"),
+    MOBILE("mobile"),
+    DESKTOP("desktop")
+}
+
+/**
  * Interface for launching URLs in the system browser.
  *
  * On Android, implement this interface using Intent:
@@ -63,6 +73,16 @@ class AuthConfig {
      * Required if persistSession is true.
      */
     var sessionStorage: SessionStorage? = null
+
+    /**
+     * Client type for authentication.
+     * - WEB: Tokens returned via cookies (default)
+     * - MOBILE: Tokens returned in response body with refreshToken
+     * - DESKTOP: Tokens returned in response body with refreshToken
+     *
+     * For Kotlin SDK, this should typically be MOBILE or DESKTOP.
+     */
+    var clientType: ClientType = ClientType.MOBILE
 }
 
 /**

@@ -11,6 +11,7 @@ import androidx.datastore.preferences.preferencesDataStore
 import dev.insforge.InsforgeClient
 import dev.insforge.auth.Auth
 import dev.insforge.auth.BrowserLauncher
+import dev.insforge.auth.ClientType
 import dev.insforge.auth.SessionStorage
 import dev.insforge.createInsforgeClient
 import dev.insforge.database.Database
@@ -76,6 +77,9 @@ object InsforgeManager {
 
                 // Use DataStore for session storage
                 sessionStorage = DataStoreSessionStorage(appContext)
+
+                // Mobile client type for receiving refresh tokens
+                clientType = ClientType.MOBILE
             }
 
             // Install Database module for todo operations
@@ -101,13 +105,13 @@ object InsforgeManager {
 private class DataStoreSessionStorage(private val context: Context) : SessionStorage {
 
     companion object {
-        private val SESSION_KEY = stringPreferencesKey("session")
+        private val REFRESH_TOKEN_KEY = stringPreferencesKey("refresh_token")
         private val USER_KEY = stringPreferencesKey("user")
     }
 
     override suspend fun save(key: String, value: String) {
         val prefKey = when (key) {
-            "insforge_session" -> SESSION_KEY
+            "insforge_refresh_token" -> REFRESH_TOKEN_KEY
             "insforge_user" -> USER_KEY
             else -> stringPreferencesKey(key)
         }
@@ -118,7 +122,7 @@ private class DataStoreSessionStorage(private val context: Context) : SessionSto
 
     override suspend fun get(key: String): String? {
         val prefKey = when (key) {
-            "insforge_session" -> SESSION_KEY
+            "insforge_refresh_token" -> REFRESH_TOKEN_KEY
             "insforge_user" -> USER_KEY
             else -> stringPreferencesKey(key)
         }
@@ -129,7 +133,7 @@ private class DataStoreSessionStorage(private val context: Context) : SessionSto
 
     override suspend fun remove(key: String) {
         val prefKey = when (key) {
-            "insforge_session" -> SESSION_KEY
+            "insforge_refresh_token" -> REFRESH_TOKEN_KEY
             "insforge_user" -> USER_KEY
             else -> stringPreferencesKey(key)
         }

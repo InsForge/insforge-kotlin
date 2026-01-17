@@ -15,9 +15,18 @@ data class User(
     val updatedAt: String
 )
 
+/**
+ * Session containing user information and tokens.
+ *
+ * @param user The authenticated user
+ * @param accessToken JWT access token for API requests (short-lived, ~15 minutes)
+ * @param refreshToken Token for refreshing the access token (long-lived, ~7 days).
+ *                     Only available for mobile/desktop clients.
+ */
 data class Session(
     val user: User,
-    val accessToken: String
+    val accessToken: String,
+    val refreshToken: String? = null
 )
 
 // ============ Sign Up / Sign In ============
@@ -31,10 +40,12 @@ data class SignUpRequest(
 
 @Serializable
 data class SignUpResponse(
-    val user: User,
+    val user: User? = null,
     val accessToken: String? = null,
     val requireEmailVerification: Boolean = false,
-    val redirectTo: String? = null
+    val redirectTo: String? = null,
+    val csrfToken: String? = null,
+    val refreshToken: String? = null
 )
 
 @Serializable
@@ -47,7 +58,9 @@ data class SignInRequest(
 data class SignInResponse(
     val user: User,
     val accessToken: String,
-    val redirectTo: String? = null
+    val redirectTo: String? = null,
+    val csrfToken: String? = null,
+    val refreshToken: String? = null
 )
 
 // ============ Email Verification ============
@@ -62,7 +75,8 @@ data class VerifyEmailRequest(
 data class VerifyEmailResponse(
     val user: User,
     val accessToken: String,
-    val redirectTo: String? = null
+    val redirectTo: String? = null,
+    val refreshToken: String? = null
 )
 
 // ============ Password Reset ============
@@ -93,14 +107,50 @@ data class OAuthUrlResponse(
 )
 
 /**
- * Result from OAuth callback
+ * Request to exchange OAuth code for tokens (PKCE flow)
+ */
+@Serializable
+data class OAuthExchangeRequest(
+    val code: String,
+    val codeVerifier: String
+)
+
+/**
+ * Response from OAuth code exchange
+ */
+@Serializable
+data class OAuthExchangeResponse(
+    val user: User,
+    val accessToken: String,
+    val refreshToken: String? = null,
+    val redirectTo: String? = null
+)
+
+/**
+ * Result from OAuth callback (contains the exchange code)
  */
 data class OAuthCallbackResult(
+    val exchangeCode: String
+)
+
+// ============ Token Refresh ============
+
+/**
+ * Request to refresh access token
+ */
+@Serializable
+data class RefreshTokenRequest(
+    val refreshToken: String
+)
+
+/**
+ * Response from token refresh
+ */
+@Serializable
+data class RefreshTokenResponse(
+    val user: User,
     val accessToken: String,
-    val userId: String,
-    val email: String,
-    val name: String?,
-    val csrfToken: String? = null
+    val refreshToken: String? = null
 )
 
 /**
