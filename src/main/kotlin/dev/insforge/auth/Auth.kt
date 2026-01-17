@@ -566,7 +566,7 @@ class Auth internal constructor(
         val uri = java.net.URI(callbackUrl)
         val queryParams = parseQueryParams(uri.query ?: uri.fragment ?: "")
 
-        val exchangeCode = queryParams["code"]
+        val exchangeCode = queryParams["insforge_code"]
             ?: throw IllegalArgumentException("Missing exchange code in callback URL")
 
         val codeVerifier = pendingPkceVerifier
