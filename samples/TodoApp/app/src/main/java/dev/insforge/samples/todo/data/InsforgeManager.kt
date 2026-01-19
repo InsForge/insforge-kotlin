@@ -106,12 +106,14 @@ private class DataStoreSessionStorage(private val context: Context) : SessionSto
 
     companion object {
         private val REFRESH_TOKEN_KEY = stringPreferencesKey("refresh_token")
+        private val ACCESS_TOKEN_KEY = stringPreferencesKey("access_token")
         private val USER_KEY = stringPreferencesKey("user")
     }
 
     override suspend fun save(key: String, value: String) {
         val prefKey = when (key) {
             "insforge_refresh_token" -> REFRESH_TOKEN_KEY
+            "insforge_access_token" -> ACCESS_TOKEN_KEY
             "insforge_user" -> USER_KEY
             else -> stringPreferencesKey(key)
         }
@@ -123,6 +125,7 @@ private class DataStoreSessionStorage(private val context: Context) : SessionSto
     override suspend fun get(key: String): String? {
         val prefKey = when (key) {
             "insforge_refresh_token" -> REFRESH_TOKEN_KEY
+            "insforge_access_token" -> ACCESS_TOKEN_KEY
             "insforge_user" -> USER_KEY
             else -> stringPreferencesKey(key)
         }
@@ -134,6 +137,7 @@ private class DataStoreSessionStorage(private val context: Context) : SessionSto
     override suspend fun remove(key: String) {
         val prefKey = when (key) {
             "insforge_refresh_token" -> REFRESH_TOKEN_KEY
+            "insforge_access_token" -> ACCESS_TOKEN_KEY
             "insforge_user" -> USER_KEY
             else -> stringPreferencesKey(key)
         }

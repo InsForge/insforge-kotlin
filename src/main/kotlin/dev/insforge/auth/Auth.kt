@@ -70,6 +70,7 @@ class Auth internal constructor(
     companion object : InsforgePluginProvider<AuthConfig, Auth> {
         override val key: String = "auth"
         private const val REFRESH_TOKEN_KEY = "insforge_refresh_token"
+        private const val ACCESS_TOKEN_KEY = "insforge_access_token"  // For legacy backend compatibility
         private const val USER_KEY = "insforge_user"
 
         override fun createConfig(configure: AuthConfig.() -> Unit): AuthConfig {
@@ -89,34 +90,47 @@ class Auth internal constructor(
     /**
      * Restore session from persistent storage.
      *
-     * Only refreshToken and user are persisted. On restore, we automatically
-     * refresh to get a new accessToken.
+     * Strategy:
+     * - If refreshToken exists: use it to get a new accessToken (new backend)
+     * - If only accessToken exists: use it directly (legacy backend compatibility)
      */
     private fun restoreSession() {
         scope.launch {
             try {
                 val storage = config.sessionStorage ?: return@launch
-                val refreshToken = storage.get(REFRESH_TOKEN_KEY) ?: return@launch
                 val userJson = storage.get(USER_KEY) ?: return@launch
-
                 val user = json.decodeFromString<User>(userJson)
-                _currentUser.value = user
 
-                // Try to refresh the access token
-                try {
-                    val result = refreshAccessTokenInternal(refreshToken)
-                    _currentSession.value = Session(result.user, result.accessToken, result.refreshToken)
-                    _currentUser.value = result.user
+                // Try refresh token first (new backend)
+                val refreshToken = storage.get(REFRESH_TOKEN_KEY)
+                if (refreshToken != null) {
+                    _currentUser.value = user
+                    try {
+                        val result = refreshAccessTokenInternal(refreshToken)
+                        _currentSession.value = Session(result.user, result.accessToken, result.refreshToken)
+                        _currentUser.value = result.user
 
-                    // Update stored refresh token if a new one was returned
-                    result.refreshToken?.let { newRefreshToken ->
-                        storage.save(REFRESH_TOKEN_KEY, newRefreshToken)
+                        // Update stored refresh token if a new one was returned
+                        result.refreshToken?.let { newRefreshToken ->
+                            storage.save(REFRESH_TOKEN_KEY, newRefreshToken)
+                        }
+                        storage.save(USER_KEY, json.encodeToString(result.user))
+                        return@launch
+                    } catch (e: Exception) {
+                        // Refresh failed, try fallback to access token or clear session
                     }
-                    storage.save(USER_KEY, json.encodeToString(result.user))
-                } catch (e: Exception) {
-                    // Refresh failed, clear stored session
-                    clearPersistedSession()
                 }
+
+                // Fallback: try legacy access token (old backend without refresh token)
+                val accessToken = storage.get(ACCESS_TOKEN_KEY)
+                if (accessToken != null) {
+                    _currentSession.value = Session(user, accessToken, null)
+                    _currentUser.value = user
+                    return@launch
+                }
+
+                // No valid tokens found, clear session
+                clearPersistedSession()
             } catch (e: Exception) {
                 // Ignore restore errors - session will just be null
             }
@@ -126,18 +140,28 @@ class Auth internal constructor(
     /**
      * Save session to persistent storage.
      *
-     * Only refreshToken and user are persisted. accessToken is kept in memory only.
+     * Strategy:
+     * - If refreshToken is available (new backend): persist refreshToken only
+     * - If no refreshToken (legacy backend): persist accessToken as fallback
      */
     private suspend fun saveSession(user: User, accessToken: String, refreshToken: String?) {
         // Always update in-memory session
         _currentSession.value = Session(user, accessToken, refreshToken)
         _currentUser.value = user
 
-        // Persist refreshToken and user if configured
+        // Persist tokens and user if configured
         if (!config.persistSession) return
         val storage = config.sessionStorage ?: return
 
-        refreshToken?.let { storage.save(REFRESH_TOKEN_KEY, it) }
+        if (refreshToken != null) {
+            // New backend: persist refreshToken, clear any legacy accessToken
+            storage.save(REFRESH_TOKEN_KEY, refreshToken)
+            storage.remove(ACCESS_TOKEN_KEY)
+        } else {
+            // Legacy backend: persist accessToken as fallback
+            storage.save(ACCESS_TOKEN_KEY, accessToken)
+            storage.remove(REFRESH_TOKEN_KEY)
+        }
         storage.save(USER_KEY, json.encodeToString(user))
     }
 
@@ -149,6 +173,7 @@ class Auth internal constructor(
         val storage = config.sessionStorage ?: return
 
         storage.remove(REFRESH_TOKEN_KEY)
+        storage.remove(ACCESS_TOKEN_KEY)
         storage.remove(USER_KEY)
     }
 
