@@ -556,17 +556,13 @@ class Auth internal constructor(
     /**
      * Handle the callback URL from OAuth/authentication flow.
      *
-     * This method extracts the exchange code from the callback URL,
-     * exchanges it for tokens using the stored PKCE code_verifier,
-     * creates a session, and persists the refresh token.
-     *
-     * Callback URL parameters:
-     * - code: Exchange code to be exchanged for tokens
+     * Supports two callback formats:
+     * 1. New backend (PKCE): callback contains `insforge_code` which is exchanged for tokens
+     * 2. Legacy backend: callback contains `access_token`, `user_id`, `email` directly
      *
      * @param callbackUrl The full callback URL intercepted by the app
      * @return OAuthExchangeResponse containing user and tokens
-     * @throws IllegalArgumentException if exchange code is missing
-     * @throws IllegalStateException if PKCE verifier is not available
+     * @throws IllegalArgumentException if required parameters are missing
      *
      * Example (Android):
      * ```kotlin
@@ -591,17 +587,51 @@ class Auth internal constructor(
         val uri = java.net.URI(callbackUrl)
         val queryParams = parseQueryParams(uri.query ?: uri.fragment ?: "")
 
+        // Check for new backend format (PKCE with exchange code)
         val exchangeCode = queryParams["insforge_code"]
-            ?: throw IllegalArgumentException("Missing exchange code in callback URL")
+        if (exchangeCode != null) {
+            val codeVerifier = pendingPkceVerifier
+                ?: throw IllegalStateException("PKCE verifier not found. Did you call signInWithOAuthPage or signInWithDefaultPage first?")
 
-        val codeVerifier = pendingPkceVerifier
-            ?: throw IllegalStateException("PKCE verifier not found. Did you call signInWithOAuthPage or signInWithDefaultPage first?")
+            // Clear the pending verifier
+            pendingPkceVerifier = null
 
-        // Clear the pending verifier
+            // Exchange the code for tokens
+            return exchangeOAuthCode(exchangeCode, codeVerifier)
+        }
+
+        // Fallback: Legacy backend format (direct tokens in callback)
+        val accessToken = queryParams["access_token"]
+            ?: throw IllegalArgumentException("Missing access_token or insforge_code in callback URL")
+        val userId = queryParams["user_id"]
+            ?: throw IllegalArgumentException("Missing user_id in callback URL")
+        val email = queryParams["email"]
+            ?: throw IllegalArgumentException("Missing email in callback URL")
+        val name = queryParams["name"]
+
+        // Clear any pending PKCE verifier (not used for legacy flow)
         pendingPkceVerifier = null
 
-        // Exchange the code for tokens
-        return exchangeOAuthCode(exchangeCode, codeVerifier)
+        // Create user from callback parameters
+        val user = User(
+            id = userId,
+            email = email,
+            metadata = name?.let { mapOf("name" to it) },
+            emailVerified = true,
+            providers = null,
+            createdAt = "",
+            updatedAt = ""
+        )
+
+        // Save session (no refresh token for legacy backend)
+        saveSession(user, accessToken, null)
+
+        return OAuthExchangeResponse(
+            user = user,
+            accessToken = accessToken,
+            refreshToken = null,
+            redirectTo = null
+        )
     }
 
     /**
