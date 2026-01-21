@@ -107,9 +107,17 @@ object InsforgeHttpClient {
                     val hasRefreshToken = auth?.currentSession?.value?.refreshToken != null
 
                     if (auth != null && hasRefreshToken) {
-                        // Skip refresh for auth endpoints to prevent infinite loops
-                        val isAuthEndpoint = request.url.encodedPath.contains("/api/auth/")
-                        if (!isAuthEndpoint) {
+                        // Skip auto-refresh for authentication endpoints that don't need it:
+                        // - /api/auth/refresh: would cause infinite loop
+                        // - /api/auth/users (POST): signup doesn't need refresh
+                        // - /api/auth/sessions (POST): signin doesn't need refresh
+                        // Other auth endpoints (getCurrentUser, updateProfile, etc.) should support auto-refresh
+                        val path = request.url.encodedPath
+                        val isRefreshEndpoint = path.contains("/api/auth/refresh")
+                        val isSignUpEndpoint = path.contains("/api/auth/users") && request.method == HttpMethod.Post
+                        val isSignInEndpoint = path.contains("/api/auth/sessions") && request.method == HttpMethod.Post
+                        val skipAutoRefresh = isRefreshEndpoint || isSignUpEndpoint || isSignInEndpoint
+                        if (!skipAutoRefresh) {
                             try {
                                 val refreshSuccessful = refreshMutex.withLock {
                                     if (isRefreshing) {

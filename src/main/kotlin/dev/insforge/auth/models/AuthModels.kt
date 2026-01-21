@@ -1,5 +1,6 @@
 package dev.insforge.auth.models
 
+import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 
 // ============ User & Session ============
@@ -112,6 +113,7 @@ data class OAuthUrlResponse(
 @Serializable
 data class OAuthExchangeRequest(
     val code: String,
+    @SerialName("code_verifier")
     val codeVerifier: String
 )
 
@@ -140,6 +142,7 @@ data class OAuthCallbackResult(
  */
 @Serializable
 data class RefreshTokenRequest(
+    @SerialName("refresh_token")
     val refreshToken: String
 )
 
