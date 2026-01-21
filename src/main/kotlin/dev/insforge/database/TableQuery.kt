@@ -498,10 +498,91 @@ class UpdateQuery @PublishedApi internal constructor(
     @PublishedApi internal val client: InsforgeClient,
     @PublishedApi internal val baseUrl: String,
     @PublishedApi internal val tableName: String,
-    @PublishedApi internal val filters: Map<String, String>,
+    initialFilters: Map<String, String>,
     @PublishedApi internal val data: JsonObject
 ) {
+    @PublishedApi internal val filters = initialFilters.toMutableMap()
     @PublishedApi internal var returnRepresentation = false
+
+    /**
+     * Equal filter
+     */
+    fun eq(column: String, value: Any): UpdateQuery {
+        filters[column] = "eq.$value"
+        return this
+    }
+
+    /**
+     * Not equal filter
+     */
+    fun neq(column: String, value: Any): UpdateQuery {
+        filters[column] = "neq.$value"
+        return this
+    }
+
+    /**
+     * Greater than filter
+     */
+    fun gt(column: String, value: Any): UpdateQuery {
+        filters[column] = "gt.$value"
+        return this
+    }
+
+    /**
+     * Greater than or equal filter
+     */
+    fun gte(column: String, value: Any): UpdateQuery {
+        filters[column] = "gte.$value"
+        return this
+    }
+
+    /**
+     * Less than filter
+     */
+    fun lt(column: String, value: Any): UpdateQuery {
+        filters[column] = "lt.$value"
+        return this
+    }
+
+    /**
+     * Less than or equal filter
+     */
+    fun lte(column: String, value: Any): UpdateQuery {
+        filters[column] = "lte.$value"
+        return this
+    }
+
+    /**
+     * LIKE filter (case-sensitive pattern matching)
+     */
+    fun like(column: String, pattern: String): UpdateQuery {
+        filters[column] = "like.$pattern"
+        return this
+    }
+
+    /**
+     * ILIKE filter (case-insensitive pattern matching)
+     */
+    fun ilike(column: String, pattern: String): UpdateQuery {
+        filters[column] = "ilike.$pattern"
+        return this
+    }
+
+    /**
+     * IN filter (value in list)
+     */
+    fun `in`(column: String, values: List<Any>): UpdateQuery {
+        filters[column] = "in.(${values.joinToString(",")})"
+        return this
+    }
+
+    /**
+     * IS NULL filter
+     */
+    fun isNull(column: String): UpdateQuery {
+        filters[column] = "is.null"
+        return this
+    }
 
     /**
      * Return updated records in response
@@ -538,9 +619,90 @@ class DeleteQuery @PublishedApi internal constructor(
     @PublishedApi internal val client: InsforgeClient,
     @PublishedApi internal val baseUrl: String,
     @PublishedApi internal val tableName: String,
-    @PublishedApi internal val filters: Map<String, String>
+    initialFilters: Map<String, String>
 ) {
+    @PublishedApi internal val filters = initialFilters.toMutableMap()
     @PublishedApi internal var returnRepresentation = false
+
+    /**
+     * Equal filter
+     */
+    fun eq(column: String, value: Any): DeleteQuery {
+        filters[column] = "eq.$value"
+        return this
+    }
+
+    /**
+     * Not equal filter
+     */
+    fun neq(column: String, value: Any): DeleteQuery {
+        filters[column] = "neq.$value"
+        return this
+    }
+
+    /**
+     * Greater than filter
+     */
+    fun gt(column: String, value: Any): DeleteQuery {
+        filters[column] = "gt.$value"
+        return this
+    }
+
+    /**
+     * Greater than or equal filter
+     */
+    fun gte(column: String, value: Any): DeleteQuery {
+        filters[column] = "gte.$value"
+        return this
+    }
+
+    /**
+     * Less than filter
+     */
+    fun lt(column: String, value: Any): DeleteQuery {
+        filters[column] = "lt.$value"
+        return this
+    }
+
+    /**
+     * Less than or equal filter
+     */
+    fun lte(column: String, value: Any): DeleteQuery {
+        filters[column] = "lte.$value"
+        return this
+    }
+
+    /**
+     * LIKE filter (case-sensitive pattern matching)
+     */
+    fun like(column: String, pattern: String): DeleteQuery {
+        filters[column] = "like.$pattern"
+        return this
+    }
+
+    /**
+     * ILIKE filter (case-insensitive pattern matching)
+     */
+    fun ilike(column: String, pattern: String): DeleteQuery {
+        filters[column] = "ilike.$pattern"
+        return this
+    }
+
+    /**
+     * IN filter (value in list)
+     */
+    fun `in`(column: String, values: List<Any>): DeleteQuery {
+        filters[column] = "in.(${values.joinToString(",")})"
+        return this
+    }
+
+    /**
+     * IS NULL filter
+     */
+    fun isNull(column: String): DeleteQuery {
+        filters[column] = "is.null"
+        return this
+    }
 
     /**
      * Return deleted records in response
