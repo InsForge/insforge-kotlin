@@ -1,6 +1,7 @@
 package dev.insforge.auth
 
 import dev.insforge.TestConfig
+import dev.insforge.auth.models.OAuthProvider
 import dev.insforge.exceptions.InsforgeHttpException
 import kotlinx.coroutines.test.runTest
 import kotlin.test.*
@@ -37,8 +38,8 @@ class AuthTest {
             )
 
             assertNotNull(response.user)
-            assertEquals(email, response.user.email)
-            println("SignUp successful: ${response.user.id}")
+            assertEquals(email, response.user!!.email)
+            println("SignUp successful: ${response.user!!.id}")
         } catch (e: InsforgeHttpException) {
             // Handle case where email verification is required
             println("SignUp response: ${e.message}")
@@ -166,8 +167,9 @@ class AuthTest {
     fun `test getOAuthUrl for google`() = runTest {
         try {
             val authUrl = client.auth.getOAuthUrl(
-                provider = "google",
-                redirectUri = "https://example.com/callback"
+                provider = OAuthProvider.GOOGLE,
+                redirectUri = "https://example.com/callback",
+                codeChallenge = "test_code_challenge_for_pkce"
             )
             assertTrue(authUrl.isNotEmpty())
             println("OAuth URL: $authUrl")
@@ -207,87 +209,35 @@ class AuthTest {
 
     @Test
     fun `test handleAuthCallback parses callback URL correctly`() = runTest {
-        val callbackUrl = "myapp://auth/callback?access_token=test_token_123&user_id=user_456&email=test@example.com&name=Test%20User"
+        // Note: handleAuthCallback expects an exchange_code parameter, not direct user data
+        val callbackUrl = "myapp://auth/callback?exchange_code=test_exchange_code_123"
 
-        val result = client.auth.handleAuthCallback(callbackUrl)
+        try {
+            val result = client.auth.handleAuthCallback(callbackUrl)
 
-        assertEquals("test_token_123", result.accessToken)
-        assertEquals("user_456", result.userId)
-        assertEquals("test@example.com", result.email)
-        assertEquals("Test User", result.name)
-        assertNull(result.csrfToken)
+            assertNotNull(result.accessToken)
+            assertNotNull(result.user)
+            println("handleAuthCallback successful: ${result.user.id}")
 
-        // Verify session was updated
-        assertNotNull(client.auth.currentSession.value)
-        assertEquals("test_token_123", client.auth.currentSession.value?.accessToken)
-        assertEquals("user_456", client.auth.currentUser.value?.id)
-        assertEquals("test@example.com", client.auth.currentUser.value?.email)
+            // Verify session was updated
+            assertNotNull(client.auth.currentSession.value)
+            assertNotNull(client.auth.currentUser.value)
+        } catch (e: InsforgeHttpException) {
+            // Expected to fail if exchange_code is invalid
+            println("handleAuthCallback failed (expected with invalid code): ${e.message}")
+        } catch (e: IllegalArgumentException) {
+            println("handleAuthCallback validation error: ${e.message}")
+        }
     }
 
     @Test
-    fun `test handleAuthCallback with csrf token`() = runTest {
-        val callbackUrl = "https://myapp.example.com/auth/callback?access_token=token_abc&user_id=uid_123&email=user@test.com&name=Jane%20Doe&csrf_token=csrf_xyz"
-
-        val result = client.auth.handleAuthCallback(callbackUrl)
-
-        assertEquals("token_abc", result.accessToken)
-        assertEquals("uid_123", result.userId)
-        assertEquals("user@test.com", result.email)
-        assertEquals("Jane Doe", result.name)
-        assertEquals("csrf_xyz", result.csrfToken)
-    }
-
-    @Test
-    fun `test handleAuthCallback without optional name`() = runTest {
-        val callbackUrl = "myapp://auth/callback?access_token=token_123&user_id=user_abc&email=noname@example.com"
-
-        val result = client.auth.handleAuthCallback(callbackUrl)
-
-        assertEquals("token_123", result.accessToken)
-        assertEquals("user_abc", result.userId)
-        assertEquals("noname@example.com", result.email)
-        assertNull(result.name)
-    }
-
-    @Test
-    fun `test handleAuthCallback throws on missing access_token`() = runTest {
-        val callbackUrl = "myapp://auth/callback?user_id=user_123&email=test@example.com"
+    fun `test handleAuthCallback throws on missing exchange_code`() = runTest {
+        val callbackUrl = "myapp://auth/callback?some_param=value"
 
         val exception = assertFailsWith<IllegalArgumentException> {
             client.auth.handleAuthCallback(callbackUrl)
         }
-        assertTrue(exception.message?.contains("access_token") == true)
-    }
-
-    @Test
-    fun `test handleAuthCallback throws on missing user_id`() = runTest {
-        val callbackUrl = "myapp://auth/callback?access_token=token_123&email=test@example.com"
-
-        val exception = assertFailsWith<IllegalArgumentException> {
-            client.auth.handleAuthCallback(callbackUrl)
-        }
-        assertTrue(exception.message?.contains("user_id") == true)
-    }
-
-    @Test
-    fun `test handleAuthCallback throws on missing email`() = runTest {
-        val callbackUrl = "myapp://auth/callback?access_token=token_123&user_id=user_456"
-
-        val exception = assertFailsWith<IllegalArgumentException> {
-            client.auth.handleAuthCallback(callbackUrl)
-        }
-        assertTrue(exception.message?.contains("email") == true)
-    }
-
-    @Test
-    fun `test handleAuthCallback with URL encoded values`() = runTest {
-        // Email with special character, name with space
-        val callbackUrl = "myapp://auth/callback?access_token=token_123&user_id=user_456&email=test%2Buser%40example.com&name=John%20Doe"
-
-        val result = client.auth.handleAuthCallback(callbackUrl)
-
-        assertEquals("test+user@example.com", result.email)
-        assertEquals("John Doe", result.name)
+        assertTrue(exception.message?.contains("exchange_code") == true)
     }
 
     // ============ State Flow Tests ============

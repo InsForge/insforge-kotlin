@@ -250,6 +250,73 @@ class AI internal constructor(
         return handleResponse(response)
     }
 
+    // ============ Embeddings ============
+
+    /**
+     * Generate embeddings for text input
+     *
+     * @param model Embedding model identifier (e.g., "google/gemini-embedding-001")
+     * @param input Single text string to embed
+     * @param encodingFormat The format to return embeddings in (FLOAT or BASE64, default FLOAT)
+     * @param dimensions The number of dimensions for output embeddings (model-dependent)
+     */
+    suspend fun generateEmbeddings(
+        model: String,
+        input: String,
+        encodingFormat: EmbeddingEncodingFormat? = null,
+        dimensions: Int? = null
+    ): EmbeddingsResponse {
+        return generateEmbeddings(
+            model = model,
+            input = EmbeddingsInput.Single(input),
+            encodingFormat = encodingFormat,
+            dimensions = dimensions
+        )
+    }
+
+    /**
+     * Generate embeddings for multiple text inputs
+     *
+     * @param model Embedding model identifier (e.g., "google/gemini-embedding-001")
+     * @param inputs List of text strings to embed
+     * @param encodingFormat The format to return embeddings in (FLOAT or BASE64, default FLOAT)
+     * @param dimensions The number of dimensions for output embeddings (model-dependent)
+     */
+    suspend fun generateEmbeddings(
+        model: String,
+        inputs: List<String>,
+        encodingFormat: EmbeddingEncodingFormat? = null,
+        dimensions: Int? = null
+    ): EmbeddingsResponse {
+        return generateEmbeddings(
+            model = model,
+            input = EmbeddingsInput.Multiple(inputs),
+            encodingFormat = encodingFormat,
+            dimensions = dimensions
+        )
+    }
+
+    /**
+     * Generate embeddings with EmbeddingsInput (internal)
+     */
+    private suspend fun generateEmbeddings(
+        model: String,
+        input: EmbeddingsInput,
+        encodingFormat: EmbeddingEncodingFormat?,
+        dimensions: Int?
+    ): EmbeddingsResponse {
+        val response = client.httpClient.post("$baseUrl/embeddings") {
+            contentType(ContentType.Application.Json)
+            setBody(EmbeddingsRequest(
+                model = model,
+                input = input,
+                encodingFormat = encodingFormat,
+                dimensions = dimensions
+            ))
+        }
+        return handleResponse(response)
+    }
+
     // ============ Configuration Management (Admin) ============
 
     /**

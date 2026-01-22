@@ -2,6 +2,7 @@ package dev.insforge.ai
 
 import dev.insforge.TestConfig
 import dev.insforge.ai.models.ChatMessage
+import dev.insforge.ai.models.EmbeddingEncodingFormat
 import dev.insforge.exceptions.InsforgeHttpException
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.toList
@@ -54,10 +55,9 @@ class AITest {
                 )
             )
 
-            assertTrue(response.success)
-            assertNotNull(response.content)
-            println("AI Response: ${response.content}")
-            println("Tokens used: ${response.metadata.usage.totalTokens}")
+            assertNotNull(response.text)
+            println("AI Response: ${response.text}")
+            println("Tokens used: ${response.metadata?.usage?.totalTokens}")
         } catch (e: InsforgeHttpException) {
             println("Chat completion failed: ${e.message}")
         }
@@ -74,8 +74,8 @@ class AITest {
                 systemPrompt = "You are a helpful math tutor. Always explain your answers briefly."
             )
 
-            assertTrue(response.success)
-            println("AI Response with system prompt: ${response.content}")
+            assertNotNull(response.text)
+            println("AI Response with system prompt: ${response.text}")
         } catch (e: InsforgeHttpException) {
             println("Chat completion with system prompt failed: ${e.message}")
         }
@@ -93,9 +93,9 @@ class AITest {
                 temperature = 0.0
             )
 
-            assertTrue(response.success)
-            assertTrue(response.content.contains("Paris", ignoreCase = true))
-            println("Low temperature response: ${response.content}")
+            assertNotNull(response.text)
+            assertTrue(response.text!!.contains("Paris", ignoreCase = true))
+            println("Low temperature response: ${response.text}")
         } catch (e: InsforgeHttpException) {
             println("Chat completion with temperature failed: ${e.message}")
         }
@@ -112,9 +112,9 @@ class AITest {
                 maxTokens = 50  // Limit output
             )
 
-            assertTrue(response.success)
-            assertTrue(response.metadata.usage.completionTokens <= 60) // Allow some buffer
-            println("Limited response: ${response.content}")
+            assertNotNull(response.text)
+            assertTrue((response.metadata?.usage?.completionTokens ?: 0) <= 60) // Allow some buffer
+            println("Limited response: ${response.text}")
         } catch (e: InsforgeHttpException) {
             println("Chat completion with max tokens failed: ${e.message}")
         }
@@ -132,9 +132,9 @@ class AITest {
                 )
             )
 
-            assertTrue(response.success)
-            assertTrue(response.content.contains("Alice", ignoreCase = true))
-            println("Conversation response: ${response.content}")
+            assertNotNull(response.text)
+            assertTrue(response.text!!.contains("Alice", ignoreCase = true))
+            println("Conversation response: ${response.text}")
         } catch (e: InsforgeHttpException) {
             println("Chat completion with history failed: ${e.message}")
         }
@@ -349,6 +349,117 @@ class AITest {
         }
     }
 
+    // ============ Embeddings Tests ============
+
+    @Test
+    fun `test generate embeddings with single input`() = runTest {
+        try {
+            val response = client.ai.generateEmbeddings(
+                model = "google/gemini-embedding-001",
+                input = "Hello world"
+            )
+
+            assertEquals("list", response.`object`)
+            assertTrue(response.data.isNotEmpty())
+            assertEquals(1, response.data.size)
+            assertEquals("embedding", response.data[0].`object`)
+            assertEquals(0, response.data[0].index)
+            assertTrue(response.data[0].embedding.isNotEmpty())
+
+            println("Generated embedding with ${response.data[0].embedding.size} dimensions")
+            println("Model used: ${response.metadata?.model}")
+        } catch (e: InsforgeHttpException) {
+            println("Embeddings generation failed: ${e.message}")
+        }
+    }
+
+    @Test
+    fun `test generate embeddings with multiple inputs`() = runTest {
+        try {
+            val response = client.ai.generateEmbeddings(
+                model = "google/gemini-embedding-001",
+                inputs = listOf("Hello", "World", "How are you?")
+            )
+
+            assertEquals("list", response.`object`)
+            assertEquals(3, response.data.size)
+
+            response.data.forEachIndexed { index, embedding ->
+                assertEquals(index, embedding.index)
+                assertTrue(embedding.embedding.isNotEmpty())
+                println("Embedding $index: ${embedding.embedding.size} dimensions")
+            }
+        } catch (e: InsforgeHttpException) {
+            println("Multiple embeddings generation failed: ${e.message}")
+        }
+    }
+
+    @Test
+    fun `test generate embeddings with encoding format`() = runTest {
+        try {
+            val response = client.ai.generateEmbeddings(
+                model = "google/gemini-embedding-001",
+                input = "Test encoding format",
+                encodingFormat = EmbeddingEncodingFormat.FLOAT
+            )
+
+            assertTrue(response.data.isNotEmpty())
+            assertTrue(response.data[0].embedding.isNotEmpty())
+            println("Float encoding: ${response.data[0].embedding.take(5)}...")
+        } catch (e: InsforgeHttpException) {
+            println("Embeddings with encoding format failed: ${e.message}")
+        }
+    }
+
+    @Test
+    fun `test generate embeddings with dimensions`() = runTest {
+        try {
+            val requestedDimensions = 512
+            val response = client.ai.generateEmbeddings(
+                model = "google/gemini-embedding-001",
+                input = "Test with custom dimensions",
+                dimensions = requestedDimensions
+            )
+
+            assertTrue(response.data.isNotEmpty())
+            // Note: Not all models support custom dimensions
+            println("Embedding dimensions: ${response.data[0].embedding.size}")
+        } catch (e: InsforgeHttpException) {
+            println("Embeddings with dimensions failed: ${e.message}")
+        }
+    }
+
+    @Test
+    fun `test generate embeddings with all parameters`() = runTest {
+        try {
+            val response = client.ai.generateEmbeddings(
+                model = "google/gemini-embedding-001",
+                input = "Full parameter test",
+                encodingFormat = EmbeddingEncodingFormat.FLOAT,
+                dimensions = 256
+            )
+
+            assertTrue(response.data.isNotEmpty())
+            println("Full params - Dimensions: ${response.data[0].embedding.size}")
+            response.metadata?.usage?.let { usage ->
+                println("Tokens used: ${usage.totalTokens}")
+            }
+        } catch (e: InsforgeHttpException) {
+            println("Embeddings with all parameters failed: ${e.message}")
+        }
+    }
+
+    @Test
+    fun `test generate embeddings with invalid model`() = runTest {
+        val exception = assertFailsWith<InsforgeHttpException> {
+            client.ai.generateEmbeddings(
+                model = "invalid/embedding-model",
+                input = "This should fail"
+            )
+        }
+        println("Expected error for invalid model: ${exception.message}")
+    }
+
     // ============ Edge Cases ============
 
     @Test
@@ -374,7 +485,7 @@ class AITest {
                 maxTokens = 100
             )
 
-            println("Long input response: ${response.content}")
+            println("Long input response: ${response.text}")
         } catch (e: InsforgeHttpException) {
             println("Long input test: ${e.message}")
         }

@@ -1,7 +1,13 @@
 package dev.insforge.ai.models
 
+import kotlinx.serialization.KSerializer
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.descriptors.SerialDescriptor
+import kotlinx.serialization.descriptors.buildClassSerialDescriptor
+import kotlinx.serialization.encoding.Decoder
+import kotlinx.serialization.encoding.Encoder
+import kotlinx.serialization.json.*
 
 // ============ Chat Models ============
 
@@ -113,7 +119,12 @@ data class ChatCompletionResponse(
     val text: String? = null,
     val annotations: List<UrlCitationAnnotation>? = null,
     val metadata: CompletionMetadata? = null
-)
+) {
+    /**
+     * Alias for [text] property for backward compatibility.
+     */
+    val content: String? get() = text
+}
 
 @Serializable
 data class CompletionMetadata(
@@ -272,3 +283,83 @@ data class AIUsageRecordsResponse(
     val records: List<AIUsageRecord>,
     val total: Int
 )
+
+// ============ Embeddings Models ============
+
+/**
+ * Encoding format for embeddings
+ */
+enum class EmbeddingEncodingFormat {
+    @SerialName("float") FLOAT,
+    @SerialName("base64") BASE64
+}
+
+@Serializable
+data class EmbeddingsRequest(
+    val model: String,
+    val input: EmbeddingsInput,
+    @SerialName("encoding_format")
+    val encodingFormat: EmbeddingEncodingFormat? = null,
+    val dimensions: Int? = null
+)
+
+/**
+ * Input for embeddings - can be a single string or array of strings
+ */
+@Serializable(with = EmbeddingsInputSerializer::class)
+sealed class EmbeddingsInput {
+    data class Single(val text: String) : EmbeddingsInput()
+    data class Multiple(val texts: List<String>) : EmbeddingsInput()
+}
+
+@Serializable
+data class EmbeddingsResponse(
+    val `object`: String, // "list"
+    val data: List<EmbeddingObject>,
+    val metadata: EmbeddingsMetadata? = null
+)
+
+@Serializable
+data class EmbeddingObject(
+    val `object`: String, // "embedding"
+    val embedding: List<Double>,
+    val index: Int
+)
+
+@Serializable
+data class EmbeddingsMetadata(
+    val model: String,
+    val usage: EmbeddingsTokenUsage? = null
+)
+
+@Serializable
+data class EmbeddingsTokenUsage(
+    val promptTokens: Int? = null,
+    val totalTokens: Int? = null
+)
+
+/**
+ * Custom serializer for EmbeddingsInput to handle both single string and array of strings
+ */
+object EmbeddingsInputSerializer : KSerializer<EmbeddingsInput> {
+    override val descriptor: SerialDescriptor = buildClassSerialDescriptor("EmbeddingsInput")
+
+    override fun serialize(encoder: Encoder, value: EmbeddingsInput) {
+        val jsonEncoder = encoder as JsonEncoder
+        val element = when (value) {
+            is EmbeddingsInput.Single -> JsonPrimitive(value.text)
+            is EmbeddingsInput.Multiple -> JsonArray(value.texts.map { JsonPrimitive(it) })
+        }
+        jsonEncoder.encodeJsonElement(element)
+    }
+
+    override fun deserialize(decoder: Decoder): EmbeddingsInput {
+        val jsonDecoder = decoder as JsonDecoder
+        val element = jsonDecoder.decodeJsonElement()
+        return when (element) {
+            is JsonPrimitive -> EmbeddingsInput.Single(element.content)
+            is JsonArray -> EmbeddingsInput.Multiple(element.map { it.jsonPrimitive.content })
+            else -> throw IllegalArgumentException("Expected string or array for EmbeddingsInput")
+        }
+    }
+}
