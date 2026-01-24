@@ -171,6 +171,90 @@ class AI internal constructor(
     }
 
     /**
+     * Generate chat completion with images (vision models)
+     *
+     * @param model Vision-capable model identifier (e.g., "openai/gpt-4-vision", "anthropic/claude-3.5-sonnet")
+     * @param text Text prompt to accompany the images
+     * @param imageUrls List of image URLs (public URLs or base64 data URIs)
+     * @param temperature Controls randomness (0-2)
+     * @param maxTokens Maximum tokens to generate
+     * @param systemPrompt Optional system prompt
+     *
+     * Example:
+     * ```kotlin
+     * val response = client.ai.chatCompletionWithImages(
+     *     model = "openai/gpt-4-vision",
+     *     text = "What is in this image?",
+     *     imageUrls = listOf("https://example.com/image.jpg")
+     * )
+     * ```
+     */
+    suspend fun chatCompletionWithImages(
+        model: String,
+        text: String,
+        imageUrls: List<String>,
+        temperature: Double? = null,
+        maxTokens: Int? = null,
+        systemPrompt: String? = null
+    ): ChatCompletionResponse {
+        val message = ChatMessage.userWithImages(text, *imageUrls.toTypedArray())
+        return chatCompletion(
+            model = model,
+            messages = listOf(message),
+            temperature = temperature,
+            maxTokens = maxTokens,
+            systemPrompt = systemPrompt
+        )
+    }
+
+    /**
+     * Generate chat completion with a PDF file
+     *
+     * @param model Model identifier (e.g., "anthropic/claude-3.5-sonnet")
+     * @param text Text prompt to accompany the file
+     * @param filename Filename with extension (e.g., "document.pdf")
+     * @param fileData File data - can be a public URL or base64 data URI
+     * @param pdfEngine PDF processing engine (optional)
+     * @param temperature Controls randomness (0-2)
+     * @param maxTokens Maximum tokens to generate
+     * @param systemPrompt Optional system prompt
+     *
+     * Example:
+     * ```kotlin
+     * val response = client.ai.chatCompletionWithFile(
+     *     model = "anthropic/claude-3.5-sonnet",
+     *     text = "Summarize this document",
+     *     filename = "report.pdf",
+     *     fileData = "https://example.com/report.pdf",
+     *     pdfEngine = PdfEngine.MISTRAL_OCR
+     * )
+     * ```
+     */
+    suspend fun chatCompletionWithFile(
+        model: String,
+        text: String,
+        filename: String,
+        fileData: String,
+        pdfEngine: PdfEngine? = null,
+        temperature: Double? = null,
+        maxTokens: Int? = null,
+        systemPrompt: String? = null
+    ): ChatCompletionResponse {
+        val message = ChatMessage.userWithFile(text, filename, fileData)
+        return chatCompletion(
+            model = model,
+            messages = listOf(message),
+            temperature = temperature,
+            maxTokens = maxTokens,
+            systemPrompt = systemPrompt,
+            fileParser = FileParserPlugin(
+                enabled = true,
+                pdf = pdfEngine?.let { PdfParserConfig(engine = it) }
+            )
+        )
+    }
+
+    /**
      * Generate chat completion with streaming
      *
      * @param model Model identifier

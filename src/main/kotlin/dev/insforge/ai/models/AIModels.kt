@@ -11,11 +11,269 @@ import kotlinx.serialization.json.*
 
 // ============ Chat Models ============
 
+/**
+ * Image detail level for vision models
+ */
+enum class ImageDetail {
+    @SerialName("auto") AUTO,
+    @SerialName("low") LOW,
+    @SerialName("high") HIGH
+}
+
+/**
+ * Audio format for audio input
+ */
+enum class AudioFormat {
+    @SerialName("wav") WAV,
+    @SerialName("mp3") MP3,
+    @SerialName("aiff") AIFF,
+    @SerialName("aac") AAC,
+    @SerialName("ogg") OGG,
+    @SerialName("flac") FLAC,
+    @SerialName("m4a") M4A
+}
+
+/**
+ * Text content part for multimodal messages
+ */
+@Serializable
+@SerialName("text")
+data class TextContent(
+    val type: String = "text",
+    val text: String
+) : MessageContent()
+
+/**
+ * Image URL configuration
+ */
+@Serializable
+data class ImageUrlConfig(
+    val url: String,
+    val detail: ImageDetail? = null
+)
+
+/**
+ * Image content part for multimodal messages
+ *
+ * @param imageUrl Image URL configuration. URL can be:
+ *   - Public URL: "https://example.com/image.jpg"
+ *   - Base64 data URI: "data:image/jpeg;base64,/9j/4AAQ..."
+ */
+@Serializable
+@SerialName("image_url")
+data class ImageContent(
+    val type: String = "image_url",
+    @SerialName("image_url")
+    val imageUrl: ImageUrlConfig
+) : MessageContent()
+
+/**
+ * Audio input configuration
+ */
+@Serializable
+data class AudioInputConfig(
+    val data: String, // Base64-encoded audio data
+    val format: AudioFormat
+)
+
+/**
+ * Audio content part for multimodal messages
+ *
+ * @param inputAudio Audio configuration with base64-encoded data
+ */
+@Serializable
+@SerialName("input_audio")
+data class AudioContent(
+    val type: String = "input_audio",
+    @SerialName("input_audio")
+    val inputAudio: AudioInputConfig
+) : MessageContent()
+
+/**
+ * File configuration for PDFs and documents
+ */
+@Serializable
+data class FileConfig(
+    val filename: String,
+    @SerialName("file_data")
+    val fileData: String // Public URL or base64 data URI
+)
+
+/**
+ * File content part for PDFs and other documents
+ *
+ * @param file File configuration with filename and data
+ */
+@Serializable
+@SerialName("file")
+data class FileContent(
+    val type: String = "file",
+    val file: FileConfig
+) : MessageContent()
+
+/**
+ * Base class for message content parts (text, image, audio, file)
+ */
+@Serializable(with = MessageContentSerializer::class)
+sealed class MessageContent
+
+/**
+ * Custom serializer for MessageContent to handle polymorphic serialization
+ */
+object MessageContentSerializer : KSerializer<MessageContent> {
+    override val descriptor: SerialDescriptor = buildClassSerialDescriptor("MessageContent")
+
+    override fun serialize(encoder: Encoder, value: MessageContent) {
+        val jsonEncoder = encoder as JsonEncoder
+        val element = when (value) {
+            is TextContent -> Json.encodeToJsonElement(TextContent.serializer(), value)
+            is ImageContent -> Json.encodeToJsonElement(ImageContent.serializer(), value)
+            is AudioContent -> Json.encodeToJsonElement(AudioContent.serializer(), value)
+            is FileContent -> Json.encodeToJsonElement(FileContent.serializer(), value)
+        }
+        jsonEncoder.encodeJsonElement(element)
+    }
+
+    override fun deserialize(decoder: Decoder): MessageContent {
+        val jsonDecoder = decoder as JsonDecoder
+        val element = jsonDecoder.decodeJsonElement().jsonObject
+        val type = element["type"]?.jsonPrimitive?.content
+
+        return when (type) {
+            "text" -> Json.decodeFromJsonElement(TextContent.serializer(), JsonObject(element))
+            "image_url" -> Json.decodeFromJsonElement(ImageContent.serializer(), JsonObject(element))
+            "input_audio" -> Json.decodeFromJsonElement(AudioContent.serializer(), JsonObject(element))
+            "file" -> Json.decodeFromJsonElement(FileContent.serializer(), JsonObject(element))
+            else -> throw IllegalArgumentException("Unknown content type: $type")
+        }
+    }
+}
+
+/**
+ * Chat message content - can be a simple string or an array of content parts
+ */
+@Serializable(with = ChatMessageContentSerializer::class)
+sealed class ChatMessageContent {
+    /**
+     * Simple text content (backward compatible)
+     */
+    data class Text(val text: String) : ChatMessageContent()
+
+    /**
+     * Multimodal content with multiple parts (text, images, audio, files)
+     */
+    data class Parts(val parts: List<MessageContent>) : ChatMessageContent()
+}
+
+/**
+ * Custom serializer for ChatMessageContent
+ */
+object ChatMessageContentSerializer : KSerializer<ChatMessageContent> {
+    override val descriptor: SerialDescriptor = buildClassSerialDescriptor("ChatMessageContent")
+
+    override fun serialize(encoder: Encoder, value: ChatMessageContent) {
+        val jsonEncoder = encoder as JsonEncoder
+        val element = when (value) {
+            is ChatMessageContent.Text -> JsonPrimitive(value.text)
+            is ChatMessageContent.Parts -> JsonArray(value.parts.map { part ->
+                when (part) {
+                    is TextContent -> Json.encodeToJsonElement(TextContent.serializer(), part)
+                    is ImageContent -> Json.encodeToJsonElement(ImageContent.serializer(), part)
+                    is AudioContent -> Json.encodeToJsonElement(AudioContent.serializer(), part)
+                    is FileContent -> Json.encodeToJsonElement(FileContent.serializer(), part)
+                }
+            })
+        }
+        jsonEncoder.encodeJsonElement(element)
+    }
+
+    override fun deserialize(decoder: Decoder): ChatMessageContent {
+        val jsonDecoder = decoder as JsonDecoder
+        val element = jsonDecoder.decodeJsonElement()
+
+        return when (element) {
+            is JsonPrimitive -> ChatMessageContent.Text(element.content)
+            is JsonArray -> ChatMessageContent.Parts(element.map { partElement ->
+                val obj = partElement.jsonObject
+                val type = obj["type"]?.jsonPrimitive?.content
+                when (type) {
+                    "text" -> Json.decodeFromJsonElement(TextContent.serializer(), partElement)
+                    "image_url" -> Json.decodeFromJsonElement(ImageContent.serializer(), partElement)
+                    "input_audio" -> Json.decodeFromJsonElement(AudioContent.serializer(), partElement)
+                    "file" -> Json.decodeFromJsonElement(FileContent.serializer(), partElement)
+                    else -> throw IllegalArgumentException("Unknown content type: $type")
+                }
+            })
+            else -> throw IllegalArgumentException("Expected string or array for ChatMessageContent")
+        }
+    }
+}
+
+/**
+ * Chat message with support for multimodal content
+ *
+ * @param role Message role: "user", "assistant", or "system"
+ * @param content Message content - can be a simple string or multimodal content
+ */
 @Serializable
 data class ChatMessage(
-    val role: String, // "user", "assistant", "system"
-    val content: String
-)
+    val role: String,
+    val content: ChatMessageContent
+) {
+    companion object {
+        /**
+         * Create a simple text message
+         */
+        fun text(role: String, content: String): ChatMessage {
+            return ChatMessage(role, ChatMessageContent.Text(content))
+        }
+
+        /**
+         * Create a user message with text
+         */
+        fun user(content: String): ChatMessage = text("user", content)
+
+        /**
+         * Create an assistant message with text
+         */
+        fun assistant(content: String): ChatMessage = text("assistant", content)
+
+        /**
+         * Create a system message with text
+         */
+        fun system(content: String): ChatMessage = text("system", content)
+
+        /**
+         * Create a multimodal message with multiple content parts
+         */
+        fun multimodal(role: String, vararg parts: MessageContent): ChatMessage {
+            return ChatMessage(role, ChatMessageContent.Parts(parts.toList()))
+        }
+
+        /**
+         * Create a user message with text and images
+         */
+        fun userWithImages(text: String, vararg imageUrls: String): ChatMessage {
+            val parts = mutableListOf<MessageContent>()
+            parts.add(TextContent(text = text))
+            imageUrls.forEach { url ->
+                parts.add(ImageContent(imageUrl = ImageUrlConfig(url = url)))
+            }
+            return ChatMessage("user", ChatMessageContent.Parts(parts))
+        }
+
+        /**
+         * Create a user message with text and a PDF file
+         */
+        fun userWithFile(text: String, filename: String, fileData: String): ChatMessage {
+            val parts = listOf(
+                TextContent(text = text),
+                FileContent(file = FileConfig(filename = filename, fileData = fileData))
+            )
+            return ChatMessage("user", ChatMessageContent.Parts(parts))
+        }
+    }
+}
 
 // ============ Plugin Models ============
 
