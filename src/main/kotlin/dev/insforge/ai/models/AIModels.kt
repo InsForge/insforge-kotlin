@@ -117,6 +117,12 @@ data class FileContent(
 @Serializable(with = MessageContentSerializer::class)
 sealed class MessageContent
 
+// Json instance that always encodes defaults (needed for type fields) but excludes nulls
+private val jsonWithDefaults = Json {
+    encodeDefaults = true
+    explicitNulls = false
+}
+
 /**
  * Custom serializer for MessageContent to handle polymorphic serialization
  */
@@ -126,10 +132,10 @@ object MessageContentSerializer : KSerializer<MessageContent> {
     override fun serialize(encoder: Encoder, value: MessageContent) {
         val jsonEncoder = encoder as JsonEncoder
         val element = when (value) {
-            is TextContent -> Json.encodeToJsonElement(TextContent.serializer(), value)
-            is ImageContent -> Json.encodeToJsonElement(ImageContent.serializer(), value)
-            is AudioContent -> Json.encodeToJsonElement(AudioContent.serializer(), value)
-            is FileContent -> Json.encodeToJsonElement(FileContent.serializer(), value)
+            is TextContent -> jsonWithDefaults.encodeToJsonElement(TextContent.serializer(), value)
+            is ImageContent -> jsonWithDefaults.encodeToJsonElement(ImageContent.serializer(), value)
+            is AudioContent -> jsonWithDefaults.encodeToJsonElement(AudioContent.serializer(), value)
+            is FileContent -> jsonWithDefaults.encodeToJsonElement(FileContent.serializer(), value)
         }
         jsonEncoder.encodeJsonElement(element)
     }
@@ -177,10 +183,10 @@ object ChatMessageContentSerializer : KSerializer<ChatMessageContent> {
             is ChatMessageContent.Text -> JsonPrimitive(value.text)
             is ChatMessageContent.Parts -> JsonArray(value.parts.map { part ->
                 when (part) {
-                    is TextContent -> Json.encodeToJsonElement(TextContent.serializer(), part)
-                    is ImageContent -> Json.encodeToJsonElement(ImageContent.serializer(), part)
-                    is AudioContent -> Json.encodeToJsonElement(AudioContent.serializer(), part)
-                    is FileContent -> Json.encodeToJsonElement(FileContent.serializer(), part)
+                    is TextContent -> jsonWithDefaults.encodeToJsonElement(TextContent.serializer(), part)
+                    is ImageContent -> jsonWithDefaults.encodeToJsonElement(ImageContent.serializer(), part)
+                    is AudioContent -> jsonWithDefaults.encodeToJsonElement(AudioContent.serializer(), part)
+                    is FileContent -> jsonWithDefaults.encodeToJsonElement(FileContent.serializer(), part)
                 }
             })
         }
@@ -457,9 +463,9 @@ data class AIModel(
     val id: String,
     val modelId: String,
     val provider: String,
-    val inputModality: List<String>,
-    val outputModality: List<String>,
-    val priceLevel: Int
+    val inputModality: List<String>? = null,
+    val outputModality: List<String>? = null,
+    val priceLevel: Int? = null
 )
 
 // ============ Configuration Models ============
