@@ -46,17 +46,57 @@ fun interface BrowserLauncher {
 class AuthConfig {
     /**
      * Browser launcher for opening OAuth URLs.
-     * Must be set before calling signInWithDefaultPage().
+     * Must be set before calling signInWithDefaultPage() or signInWithOAuthPage().
      *
-     * Example (Android):
+     * ## Android - Chrome Custom Tabs (Recommended)
+     *
+     * Chrome Custom Tabs provides an in-app browser experience similar to iOS's ASWebAuthenticationSession.
+     * Benefits:
+     * - Opens in-app instead of switching to external browser
+     * - Shares Chrome's login state and password manager
+     * - Faster loading with pre-warming
+     * - Customizable UI (toolbar color, animations)
+     *
      * ```kotlin
+     * // Add dependency in build.gradle.kts:
+     * // implementation("androidx.browser:browser:1.7.0")
+     *
+     * import android.net.Uri
+     * import androidx.browser.customtabs.CustomTabsIntent
+     *
      * val client = createInsforgeClient(baseURL, anonKey) {
      *     install(Auth) {
      *         browserLauncher = BrowserLauncher { url ->
-     *             val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url))
-     *             context.startActivity(intent)
+     *             val customTabsIntent = CustomTabsIntent.Builder()
+     *                 .setShowTitle(true)
+     *                 // Optional: customize toolbar color
+     *                 // .setToolbarColor(ContextCompat.getColor(context, R.color.primary))
+     *                 .build()
+     *             customTabsIntent.launchUrl(context, Uri.parse(url))
      *         }
+     *         persistSession = true
+     *         sessionStorage = mySessionStorage
+     *         clientType = ClientType.MOBILE
      *     }
+     * }
+     * ```
+     *
+     * ## Fallback - External Browser
+     *
+     * If Chrome Custom Tabs is not available, fall back to external browser:
+     *
+     * ```kotlin
+     * browserLauncher = BrowserLauncher { url ->
+     *     val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url))
+     *     context.startActivity(intent)
+     * }
+     * ```
+     *
+     * ## Desktop/JVM
+     *
+     * ```kotlin
+     * browserLauncher = BrowserLauncher { url ->
+     *     Desktop.getDesktop().browse(URI(url))
      * }
      * ```
      */

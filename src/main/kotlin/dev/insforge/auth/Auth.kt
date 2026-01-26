@@ -385,7 +385,9 @@ class Auth internal constructor(
     /**
      * Sign in with a specific OAuth provider using PKCE for security.
      *
-     * Opens the OAuth provider's authentication page in the system browser.
+     * Opens the OAuth provider's authentication page using Chrome Custom Tabs (recommended)
+     * or external browser via the configured browserLauncher.
+     *
      * After successful authentication, the user will be redirected to your callback URL
      * with an exchange code that must be exchanged for tokens using handleAuthCallback().
      *
@@ -393,7 +395,7 @@ class Auth internal constructor(
      * 1. App calls signInWithOAuthPage(provider, redirectUri)
      * 2. SDK generates PKCE code_verifier and code_challenge
      * 3. SDK fetches the OAuth authorization URL from InsForge (with code_challenge)
-     * 4. SDK automatically opens the OAuth URL in system browser
+     * 4. SDK automatically opens the OAuth URL via browserLauncher
      * 5. User authenticates with the provider (Google, GitHub, etc.)
      * 6. Provider redirects to InsForge, then InsForge redirects to your callback URL with exchange_code
      * 7. Android intercepts callback URL (via Custom URL Scheme or App Links)
@@ -405,17 +407,21 @@ class Auth internal constructor(
      * @param redirectUri Callback URL where InsForge will redirect after authentication.
      *                    Can be a custom URL scheme (e.g., "yourapp://auth/callback")
      *                    or an App Link (e.g., "https://yourdomain.com/auth/callback")
-     * @return The OAuth authorization URL (also opens in browser if browserLauncher is configured)
+     * @return The OAuth authorization URL (also opens in browser)
      * @throws IllegalStateException if browserLauncher is not configured
      *
-     * Example (Android):
+     * Example with Chrome Custom Tabs (Recommended for Android):
      * ```kotlin
-     * // Configure browserLauncher when creating the client
+     * // Add dependency: implementation("androidx.browser:browser:1.7.0")
+     *
      * val client = createInsforgeClient(baseURL, anonKey) {
      *     install(Auth) {
      *         browserLauncher = BrowserLauncher { url ->
-     *             val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url))
-     *             context.startActivity(intent)
+     *             // Chrome Custom Tabs provides in-app browser experience
+     *             val customTabsIntent = CustomTabsIntent.Builder()
+     *                 .setShowTitle(true)
+     *                 .build()
+     *             customTabsIntent.launchUrl(context, Uri.parse(url))
      *         }
      *         persistSession = true
      *         sessionStorage = mySessionStorage
@@ -426,7 +432,7 @@ class Auth internal constructor(
      * // Start OAuth flow with Google
      * lifecycleScope.launch {
      *     val authUrl = client.auth.signInWithOAuthPage(OAuthProvider.GOOGLE, "yourapp://auth/callback")
-     *     // Browser opens automatically
+     *     // Custom Tabs opens automatically
      * }
      *
      * // Handle callback in your Activity
@@ -447,7 +453,9 @@ class Auth internal constructor(
                 "browserLauncher is not configured. Please configure it when installing the Auth module:\n" +
                 "install(Auth) {\n" +
                 "    browserLauncher = BrowserLauncher { url ->\n" +
-                "        // Open URL in system browser\n" +
+                "        // Use Chrome Custom Tabs for in-app browser experience\n" +
+                "        val customTabsIntent = CustomTabsIntent.Builder().build()\n" +
+                "        customTabsIntent.launchUrl(context, Uri.parse(url))\n" +
                 "    }\n" +
                 "}"
             )
@@ -463,15 +471,18 @@ class Auth internal constructor(
     }
 
     /**
-     * Open InsForge's hosted authentication page in the system browser.
+     * Open InsForge's hosted authentication page.
      *
      * This page supports both OAuth providers (Google, GitHub, Discord, etc.)
      * and email+password authentication. Uses PKCE for security.
      *
+     * Opens using Chrome Custom Tabs (recommended) or external browser via
+     * the configured browserLauncher.
+     *
      * Flow:
      * 1. App calls signInWithDefaultPage(redirectTo:)
      * 2. SDK generates PKCE code_verifier and code_challenge
-     * 3. SDK automatically opens the authentication URL in system browser (with code_challenge)
+     * 3. SDK automatically opens the authentication URL (with code_challenge)
      * 4. User authenticates (OAuth or email+password)
      * 5. InsForge redirects to callback URL with exchange_code
      * 6. Android intercepts callback URL (via Custom URL Scheme or App Links)
@@ -482,16 +493,21 @@ class Auth internal constructor(
      * @param redirectTo Callback URL where InsForge will redirect after authentication.
      *                   Can be a custom URL scheme (e.g., "yourapp://auth/callback")
      *                   or an App Link (e.g., "https://yourdomain.com/auth/callback")
-     * @return The authentication URL (also opens in browser if browserLauncher is configured)
+     * @return The authentication URL (also opens in browser)
      * @throws IllegalStateException if browserLauncher is not configured
      *
-     * Setup (Android):
+     * Setup with Chrome Custom Tabs (Recommended for Android):
      * ```kotlin
+     * // Add dependency: implementation("androidx.browser:browser:1.7.0")
+     *
      * val client = createInsforgeClient(baseURL, anonKey) {
      *     install(Auth) {
      *         browserLauncher = BrowserLauncher { url ->
-     *             val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url))
-     *             context.startActivity(intent)
+     *             // Chrome Custom Tabs provides in-app browser experience
+     *             val customTabsIntent = CustomTabsIntent.Builder()
+     *                 .setShowTitle(true)
+     *                 .build()
+     *             customTabsIntent.launchUrl(context, Uri.parse(url))
      *         }
      *         persistSession = true
      *         sessionStorage = object : SessionStorage {
@@ -508,18 +524,19 @@ class Auth internal constructor(
      *     }
      * }
      *
-     * // Start OAuth flow - browser opens automatically
+     * // Start auth flow - Custom Tabs opens automatically
      * client.auth.signInWithDefaultPage("yourapp://auth/callback")
      * ```
      */
     fun signInWithDefaultPage(redirectTo: String): String {
-        // Automatically open browser if launcher is configured
         val launcher = config.browserLauncher
             ?: throw IllegalStateException(
                 "browserLauncher is not configured. Please configure it when installing the Auth module:\n" +
                 "install(Auth) {\n" +
                 "    browserLauncher = BrowserLauncher { url ->\n" +
-                "        // Open URL in system browser\n" +
+                "        // Use Chrome Custom Tabs for in-app browser experience\n" +
+                "        val customTabsIntent = CustomTabsIntent.Builder().build()\n" +
+                "        customTabsIntent.launchUrl(context, Uri.parse(url))\n" +
                 "    }\n" +
                 "}"
             )
