@@ -5,16 +5,41 @@ import kotlinx.serialization.Serializable
 
 // ============ User & Session ============
 
+/**
+ * User information returned from authentication endpoints.
+ *
+ * @param id Unique user identifier
+ * @param email User's email address
+ * @param emailVerified Whether the email has been verified
+ * @param providers List of OAuth providers linked to this account
+ * @param profile User profile containing name, avatar_url, and custom fields
+ * @param metadata System metadata (nullable)
+ * @param createdAt ISO 8601 timestamp of user creation
+ * @param updatedAt ISO 8601 timestamp of last update
+ */
 @Serializable
 data class User(
     val id: String,
     val email: String,
-    val metadata: Map<String, String>? = null,
     val emailVerified: Boolean = false,
     val providers: List<String>? = null,
+    val profile: Map<String, String?>? = null,
+    val metadata: Map<String, String>? = null,
     val createdAt: String,
     val updatedAt: String
-)
+) {
+    /**
+     * Convenience property to get user's display name from profile.
+     */
+    val name: String?
+        get() = profile?.get("name")
+
+    /**
+     * Convenience property to get user's avatar URL from profile.
+     */
+    val avatarUrl: String?
+        get() = profile?.get("avatar_url")
+}
 
 /**
  * Session containing user information and tokens.

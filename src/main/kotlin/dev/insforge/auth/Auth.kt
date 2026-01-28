@@ -633,9 +633,10 @@ class Auth internal constructor(
         val user = User(
             id = userId,
             email = email,
-            metadata = name?.let { mapOf("name" to it) },
             emailVerified = true,
             providers = null,
+            profile = name?.let { mapOf("name" to it) },
+            metadata = null,
             createdAt = "",
             updatedAt = ""
         )
