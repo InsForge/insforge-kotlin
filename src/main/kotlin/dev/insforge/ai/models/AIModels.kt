@@ -9,6 +9,118 @@ import kotlinx.serialization.encoding.Decoder
 import kotlinx.serialization.encoding.Encoder
 import kotlinx.serialization.json.*
 
+// ============ Tool Calling Models ============
+
+/**
+ * Function definition for a tool
+ *
+ * @param name The name of the function to call
+ * @param description A description of what the function does
+ * @param parameters JSON Schema object describing the function parameters
+ */
+@Serializable
+data class ToolFunction(
+    val name: String,
+    val description: String? = null,
+    val parameters: JsonObject? = null
+)
+
+/**
+ * Tool definition for chat completion
+ *
+ * @param type The type of tool (currently only "function")
+ * @param function The function definition
+ */
+@Serializable
+data class Tool(
+    val type: String,
+    val function: ToolFunction
+)
+
+/**
+ * Function details within a tool call response
+ *
+ * @param name The name of the function that was called
+ * @param arguments The arguments passed to the function as a JSON string
+ */
+@Serializable
+data class ToolCallFunction(
+    val name: String,
+    val arguments: String
+)
+
+/**
+ * Tool call returned by the model in a chat completion response
+ *
+ * @param id Unique identifier for the tool call
+ * @param type The type of tool call (currently only "function")
+ * @param function The function that was called with its arguments
+ */
+@Serializable
+data class ToolCall(
+    val id: String,
+    val type: String,
+    val function: ToolCallFunction
+)
+
+/**
+ * Controls which tool the model should call.
+ *
+ * - [Auto]: Model decides whether to call a tool (default)
+ * - [None]: Model will not call any tool
+ * - [Required]: Model must call at least one tool
+ * - [Function]: Model must call the specified function
+ */
+@Serializable(with = ToolChoiceSerializer::class)
+sealed class ToolChoice {
+    object Auto : ToolChoice()
+    object None : ToolChoice()
+    object Required : ToolChoice()
+    data class Function(val name: String) : ToolChoice()
+}
+
+/**
+ * Custom serializer for ToolChoice to handle union of string and object formats
+ */
+object ToolChoiceSerializer : KSerializer<ToolChoice> {
+    override val descriptor: SerialDescriptor = buildClassSerialDescriptor("ToolChoice")
+
+    override fun serialize(encoder: Encoder, value: ToolChoice) {
+        val jsonEncoder = encoder as JsonEncoder
+        val element = when (value) {
+            is ToolChoice.Auto -> JsonPrimitive("auto")
+            is ToolChoice.None -> JsonPrimitive("none")
+            is ToolChoice.Required -> JsonPrimitive("required")
+            is ToolChoice.Function -> buildJsonObject {
+                put("type", JsonPrimitive("function"))
+                putJsonObject("function") {
+                    put("name", JsonPrimitive(value.name))
+                }
+            }
+        }
+        jsonEncoder.encodeJsonElement(element)
+    }
+
+    override fun deserialize(decoder: Decoder): ToolChoice {
+        val jsonDecoder = decoder as JsonDecoder
+        val element = jsonDecoder.decodeJsonElement()
+        return when (element) {
+            is JsonPrimitive -> when (element.content) {
+                "auto" -> ToolChoice.Auto
+                "none" -> ToolChoice.None
+                "required" -> ToolChoice.Required
+                else -> throw IllegalArgumentException("Unknown tool choice: ${element.content}")
+            }
+            is JsonObject -> {
+                val name = element["function"]?.jsonObject?.get("name")?.jsonPrimitive?.content
+                    ?: throw IllegalArgumentException("Missing function name in tool choice")
+                ToolChoice.Function(name)
+            }
+            else -> throw IllegalArgumentException("Expected string or object for ToolChoice")
+        }
+    }
+}
+
 // ============ Chat Models ============
 
 /**
@@ -218,13 +330,19 @@ object ChatMessageContentSerializer : KSerializer<ChatMessageContent> {
 /**
  * Chat message with support for multimodal content
  *
- * @param role Message role: "user", "assistant", or "system"
+ * @param role Message role: "user", "assistant", "system", or "tool"
  * @param content Message content - can be a simple string or multimodal content
+ * @param toolCalls Tool calls made by the assistant
+ * @param toolCallId The tool call ID this message responds to
  */
 @Serializable
 data class ChatMessage(
     val role: String,
-    val content: ChatMessageContent
+    val content: ChatMessageContent? = null,
+    @SerialName("tool_calls")
+    val toolCalls: List<ToolCall>? = null,
+    @SerialName("tool_call_id")
+    val toolCallId: String? = null
 ) {
     companion object {
         /**
@@ -248,6 +366,20 @@ data class ChatMessage(
          * Create a system message with text
          */
         fun system(content: String): ChatMessage = text("system", content)
+
+        /**
+         * Create a tool response message
+         *
+         * @param toolCallId The ID of the tool call this message is responding to
+         * @param content The result of the tool call as a string
+         */
+        fun tool(toolCallId: String, content: String): ChatMessage {
+            return ChatMessage(
+                role = "tool",
+                content = ChatMessageContent.Text(content),
+                toolCallId = toolCallId
+            )
+        }
 
         /**
          * Create a multimodal message with multiple content parts
@@ -352,7 +484,10 @@ data class ChatCompletionRequest(
     val systemPrompt: String? = null,
     val webSearch: WebSearchPlugin? = null,
     val fileParser: FileParserPlugin? = null,
-    val thinking: Boolean? = null
+    val thinking: Boolean? = null,
+    val tools: List<Tool>? = null,
+    val toolChoice: ToolChoice? = null,
+    val parallelToolCalls: Boolean? = null
 )
 
 // ============ Response Models ============
@@ -382,7 +517,9 @@ data class UrlCitationAnnotation(
 data class ChatCompletionResponse(
     val text: String? = null,
     val annotations: List<UrlCitationAnnotation>? = null,
-    val metadata: CompletionMetadata? = null
+    val metadata: CompletionMetadata? = null,
+    @SerialName("tool_calls")
+    val toolCalls: List<ToolCall>? = null
 ) {
     /**
      * Alias for [text] property for backward compatibility.

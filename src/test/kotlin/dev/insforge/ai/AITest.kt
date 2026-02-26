@@ -6,6 +6,7 @@ import dev.insforge.exceptions.InsforgeHttpException
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.test.runTest
+import kotlinx.serialization.json.*
 import kotlin.test.*
 import kotlin.time.Duration.Companion.seconds
 
@@ -466,6 +467,50 @@ class AITest {
         println("Expected error for invalid model: ${exception.message}")
     }
 
+    // ============ Tool Calling Tests ============
+
+    @Test
+    fun `test chat completion with tool calling`() = runTest {
+        try {
+            val response = client.ai.chatCompletion(
+                model = "openai/gpt-4o-mini",
+                messages = listOf(
+                    ChatMessage.user("What's the weather in Tokyo?")
+                ),
+                tools = listOf(
+                    Tool(
+                        type = "function",
+                        function = ToolFunction(
+                            name = "get_weather",
+                            description = "Get the current weather for a location",
+                            parameters = buildJsonObject {
+                                put("type", JsonPrimitive("object"))
+                                putJsonObject("properties") {
+                                    putJsonObject("location") {
+                                        put("type", JsonPrimitive("string"))
+                                        put("description", JsonPrimitive("City name"))
+                                    }
+                                }
+                                put("required", JsonArray(listOf(JsonPrimitive("location"))))
+                            }
+                        )
+                    )
+                ),
+                toolChoice = ToolChoice.Auto
+            )
+
+            if (!response.toolCalls.isNullOrEmpty()) {
+                val toolCall = response.toolCalls!!.first()
+                assertEquals("get_weather", toolCall.function.name)
+                println("Tool call: ${toolCall.function.name}(${toolCall.function.arguments})")
+            } else {
+                println("Model chose not to call a tool: ${response.text}")
+            }
+        } catch (e: InsforgeHttpException) {
+            println("Tool calling failed: ${e.message}")
+        }
+    }
+
     // ============ Edge Cases ============
 
     @Test
@@ -668,6 +713,13 @@ class AITest {
         assertTrue(multiMsg.content is ChatMessageContent.Parts)
         assertEquals(2, (multiMsg.content as ChatMessageContent.Parts).parts.size)
 
+        // Test tool message
+        val toolMsg = ChatMessage.tool("call_abc123", """{"result": "value"}""")
+        assertEquals("tool", toolMsg.role)
+        assertEquals("call_abc123", toolMsg.toolCallId)
+        assertTrue(toolMsg.content is ChatMessageContent.Text)
+        assertEquals("""{"result": "value"}""", (toolMsg.content as ChatMessageContent.Text).text)
+
         println("All ChatMessage factory methods work correctly")
     }
 
@@ -704,7 +756,40 @@ class AITest {
         assertTrue(fileJson.contains("\"filename\""))
         assertTrue(fileJson.contains("\"file_data\""))
 
+        // Test tool message serialization
+        val toolMsg = ChatMessage.tool("call_abc123", """{"result": "value"}""")
+        val toolJson = json.encodeToString(ChatMessage.serializer(), toolMsg)
+        println("\nTool message JSON:")
+        println(toolJson)
+        assertTrue(toolJson.contains("\"role\""))
+        assertTrue(toolJson.contains("\"tool\""))
+        assertTrue(toolJson.contains("\"tool_call_id\""))
+        assertTrue(toolJson.contains("call_abc123"))
+
         println("\nAll serialization tests passed")
+    }
+
+    @Test
+    fun `test ToolChoice serialization`() {
+        val json = kotlinx.serialization.json.Json { prettyPrint = true }
+
+        // String variants
+        val autoJson = json.encodeToString(ToolChoice.serializer(), ToolChoice.Auto)
+        assertEquals("\"auto\"", autoJson)
+
+        val noneJson = json.encodeToString(ToolChoice.serializer(), ToolChoice.None)
+        assertEquals("\"none\"", noneJson)
+
+        val requiredJson = json.encodeToString(ToolChoice.serializer(), ToolChoice.Required)
+        assertEquals("\"required\"", requiredJson)
+
+        // Function variant
+        val funcJson = json.encodeToString(ToolChoice.serializer(), ToolChoice.Function("get_weather"))
+        assertTrue(funcJson.contains("\"type\""))
+        assertTrue(funcJson.contains("\"function\""))
+        assertTrue(funcJson.contains("\"get_weather\""))
+
+        println("All ToolChoice serialization tests passed")
     }
 
     @Test

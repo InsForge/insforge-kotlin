@@ -73,6 +73,9 @@ class AI internal constructor(
      * @param webSearch Web search plugin configuration for real-time information
      * @param fileParser File parser plugin configuration for PDF processing
      * @param thinking Enable extended reasoning capabilities (only works with Anthropic models with :thinking suffix)
+     * @param tools List of tools the model may call
+     * @param toolChoice Controls which tool the model should call
+     * @param parallelToolCalls Allow the model to call multiple tools in parallel
      */
     suspend fun chatCompletion(
         model: String,
@@ -84,7 +87,10 @@ class AI internal constructor(
         systemPrompt: String? = null,
         webSearch: WebSearchPlugin? = null,
         fileParser: FileParserPlugin? = null,
-        thinking: Boolean? = null
+        thinking: Boolean? = null,
+        tools: List<Tool>? = null,
+        toolChoice: ToolChoice? = null,
+        parallelToolCalls: Boolean? = null
     ): ChatCompletionResponse {
         val response = client.httpClient.post("$baseUrl/chat/completion") {
             contentType(ContentType.Application.Json)
@@ -98,7 +104,10 @@ class AI internal constructor(
                 systemPrompt = systemPrompt,
                 webSearch = webSearch,
                 fileParser = fileParser,
-                thinking = thinking
+                thinking = thinking,
+                tools = tools,
+                toolChoice = toolChoice,
+                parallelToolCalls = parallelToolCalls
             ))
         }
         return handleResponse(response)
@@ -266,6 +275,9 @@ class AI internal constructor(
      * @param webSearch Web search plugin configuration
      * @param fileParser File parser plugin configuration
      * @param thinking Enable extended reasoning capabilities
+     * @param tools List of tools the model may call
+     * @param toolChoice Controls which tool the model should call
+     * @param parallelToolCalls Allow the model to call multiple tools in parallel
      * @return Flow of streaming chunks
      */
     fun chatCompletionStream(
@@ -277,7 +289,10 @@ class AI internal constructor(
         systemPrompt: String? = null,
         webSearch: WebSearchPlugin? = null,
         fileParser: FileParserPlugin? = null,
-        thinking: Boolean? = null
+        thinking: Boolean? = null,
+        tools: List<Tool>? = null,
+        toolChoice: ToolChoice? = null,
+        parallelToolCalls: Boolean? = null
     ): Flow<String> = flow {
         val response = client.httpClient.post("$baseUrl/chat/completion") {
             contentType(ContentType.Application.Json)
@@ -291,7 +306,10 @@ class AI internal constructor(
                 systemPrompt = systemPrompt,
                 webSearch = webSearch,
                 fileParser = fileParser,
-                thinking = thinking
+                thinking = thinking,
+                tools = tools,
+                toolChoice = toolChoice,
+                parallelToolCalls = parallelToolCalls
             ))
         }
 
