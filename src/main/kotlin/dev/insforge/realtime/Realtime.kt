@@ -18,6 +18,8 @@ import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
@@ -78,6 +80,7 @@ class Realtime internal constructor(
     // Socket.IO client
     private var socket: Socket? = null
     private var connectJob: Deferred<Unit>? = null
+    private val connectMutex = Mutex()
     private val subscribedChannels = ConcurrentHashMap.newKeySet<String>()
     private val eventListeners = ConcurrentHashMap<String, MutableSet<EventCallback<*>>>()
 
@@ -184,183 +187,227 @@ class Realtime internal constructor(
             return
         }
 
-        // Connection already in progress, wait for it
-        connectJob?.let {
-            if (it.isActive) {
-                it.await()
-                return
+        val connectionJob = connectMutex.withLock {
+            if (socket?.connected() == true) {
+                return@withLock null
+            }
+
+            connectJob?.takeIf { it.isActive } ?: run {
+                cancelPendingConnectionWork()
+
+                scope.async {
+                    suspendCancellableCoroutine { continuation ->
+                        try {
+                            _connectionState.value = ConnectionState.Connecting
+
+                            // Get auth token
+                            val token = client.getCurrentAccessToken() ?: client.anonKey
+
+                            logger.debug("Connecting to ${client.baseURL}")
+                            logger.verbose { "Auth token: ${if (token.isNotEmpty()) "${token.take(20)}..." else "(none)"}" }
+
+                            // Configure Socket.IO options
+                            val options = IO.Options().apply {
+                                // Transport - prefer websocket
+                                transports = arrayOf("websocket")
+                                // Auth configuration
+                                if (token.isNotEmpty()) {
+                                    auth = mapOf("token" to token)
+                                }
+                                // Reconnection options
+                                reconnection = true
+                                reconnectionAttempts = 5
+                                reconnectionDelay = 1000
+                                reconnectionDelayMax = 5000
+                                // Timeout
+                                timeout = CONNECT_TIMEOUT_MS
+                            }
+
+                            logger.verbose { "Socket.IO options: transports=${options.transports.toList()}, reconnection=${options.reconnection}" }
+
+                            cleanupSocket(disconnect = true)
+
+                            // Create socket connection to base URL
+                            val currentSocket = IO.socket(client.baseURL, options)
+                            socket = currentSocket
+
+                            val initialConnectionGuard = ConnectionAttemptGuard()
+
+                            // Setup timeout
+                            val timeoutJob = scope.launch {
+                                delay(CONNECT_TIMEOUT_MS)
+                                initialConnectionGuard.finish {
+                                    cleanupSocket(currentSocket, disconnect = true)
+                                    _connectionState.value = ConnectionState.Disconnected
+                                    if (continuation.isActive) {
+                                        continuation.resumeWithException(
+                                            Exception("Connection timeout after ${CONNECT_TIMEOUT_MS}ms")
+                                        )
+                                    }
+                                }
+                            }
+
+                            continuation.invokeOnCancellation {
+                                initialConnectionGuard.finish {
+                                    cleanupSocket(currentSocket, disconnect = true)
+                                    _connectionState.value = ConnectionState.Disconnected
+                                }
+                            }
+
+                            currentSocket.apply {
+                                on(Socket.EVENT_CONNECT) {
+                                    timeoutJob.cancel()
+                                    val completeInitialConnect = initialConnectionGuard.finish {
+                                        _connectionState.value = ConnectionState.Connected
+                                        logger.info("Connected to Socket.IO server")
+                                        logger.debug("Socket ID: ${id()}")
+
+                                        // Re-subscribe to channels on every connect (initial + reconnects)
+                                        for (channel in subscribedChannels) {
+                                            val subscribeData = JSONObject().apply {
+                                                put("channel", channel)
+                                            }
+                                            logOutgoing("realtime:subscribe", subscribeData)
+                                            emit("realtime:subscribe", subscribeData)
+                                        }
+
+                                        notifyListeners("connect", null)
+
+                                        if (continuation.isActive) {
+                                            continuation.resume(Unit)
+                                        }
+                                    }
+
+                                    if (completeInitialConnect || socket !== currentSocket) {
+                                        return@on
+                                    }
+
+                                    _connectionState.value = ConnectionState.Connected
+                                    logger.info("Connected to Socket.IO server")
+                                    logger.debug("Socket ID: ${id()}")
+
+                                    // Re-subscribe to channels on every connect (initial + reconnects)
+                                    for (channel in subscribedChannels) {
+                                        val subscribeData = JSONObject().apply {
+                                            put("channel", channel)
+                                        }
+                                        logOutgoing("realtime:subscribe", subscribeData)
+                                        emit("realtime:subscribe", subscribeData)
+                                    }
+
+                                    notifyListeners("connect", null)
+                                }
+
+                                on(Socket.EVENT_CONNECT_ERROR) { args ->
+                                    timeoutJob.cancel()
+                                    val error = args.firstOrNull()?.toString() ?: "Unknown error"
+                                    val completeInitialConnect = initialConnectionGuard.finish {
+                                        _connectionState.value = ConnectionState.Error(error)
+                                        logger.error("Connection error: $error")
+                                        logger.verbose { "Connection error details: ${args.toList()}" }
+
+                                        notifyListeners("connect_error", error)
+
+                                        cleanupSocket(currentSocket, disconnect = true)
+                                        if (continuation.isActive) {
+                                            continuation.resumeWithException(Exception(error))
+                                        }
+                                    }
+
+                                    if (completeInitialConnect || socket !== currentSocket) {
+                                        return@on
+                                    }
+
+                                    _connectionState.value = ConnectionState.Error(error)
+                                    logger.error("Connection error: $error")
+                                    logger.verbose { "Connection error details: ${args.toList()}" }
+                                    notifyListeners("connect_error", error)
+                                }
+
+                                on(Socket.EVENT_DISCONNECT) { args ->
+                                    val reason = args.firstOrNull()?.toString() ?: "unknown"
+                                    val completeInitialConnect = initialConnectionGuard.finish {
+                                        _connectionState.value = ConnectionState.Disconnected
+                                        logger.info("Disconnected: $reason")
+                                        notifyListeners("disconnect", reason)
+
+                                        cleanupSocket(currentSocket, disconnect = false)
+                                        if (continuation.isActive) {
+                                            continuation.resumeWithException(
+                                                Exception("Disconnected before connection completed: $reason")
+                                            )
+                                        }
+                                    }
+
+                                    if (completeInitialConnect || socket !== currentSocket) {
+                                        return@on
+                                    }
+
+                                    _connectionState.value = ConnectionState.Disconnected
+                                    logger.info("Disconnected: $reason")
+                                    notifyListeners("disconnect", reason)
+                                }
+
+                                on("realtime:error") { args ->
+                                    logIncoming("realtime:error", args.firstOrNull())
+                                    val data = args.firstOrNull() as? JSONObject
+                                    val error = RealtimeError(
+                                        code = data?.optString("code") ?: "UNKNOWN",
+                                        message = data?.optString("message") ?: "Unknown error"
+                                    )
+                                    logger.error("Realtime error: ${error.message}")
+                                    notifyListeners("error", error)
+                                }
+
+                                // Listen for incoming realtime messages
+                                on("realtime:message") { args ->
+                                    logIncoming("realtime:message", args.firstOrNull())
+                                    handleIncomingEvent("realtime:message", args)
+                                }
+
+                                // Catch-all listener for all incoming events
+                                // This mirrors the TypeScript SDK's socket.onAny() behavior
+                                onAnyIncoming { args ->
+                                    // args[0] is the event name, args[1:] are the actual arguments
+                                    if (args.isNotEmpty()) {
+                                        val eventName = args[0] as? String ?: return@onAnyIncoming
+                                        // Skip already handled events
+                                        if (eventName == "realtime:error") return@onAnyIncoming
+                                        val eventArgs = if (args.size > 1) args.sliceArray(1 until args.size) else emptyArray()
+                                        logIncoming(eventName, eventArgs.firstOrNull())
+                                        handleIncomingEvent(eventName, eventArgs)
+                                    }
+                                }
+
+                                // Connect
+                                logger.debug("Initiating socket connection...")
+                                connect()
+                            }
+
+                        } catch (e: Exception) {
+                            _connectionState.value = ConnectionState.Error(e.message ?: "Failed to connect")
+                            cleanupSocket(disconnect = true)
+                            if (continuation.isActive) {
+                                continuation.resumeWithException(e)
+                            }
+                        }
+                    }
+                }.also { connectJob = it }
             }
         }
 
-        cancelPendingConnectionWork()
-
-        connectJob = scope.async {
-            suspendCancellableCoroutine { continuation ->
-                try {
-                    _connectionState.value = ConnectionState.Connecting
-
-                    // Get auth token
-                    val token = client.getCurrentAccessToken() ?: client.anonKey
-
-                    logger.debug("Connecting to ${client.baseURL}")
-                    logger.verbose { "Auth token: ${if (token.isNotEmpty()) "${token.take(20)}..." else "(none)"}" }
-
-                    // Configure Socket.IO options
-                    val options = IO.Options().apply {
-                        // Transport - prefer websocket
-                        transports = arrayOf("websocket")
-                        // Auth configuration
-                        if (token.isNotEmpty()) {
-                            auth = mapOf("token" to token)
-                        }
-                        // Reconnection options
-                        reconnection = true
-                        reconnectionAttempts = 5
-                        reconnectionDelay = 1000
-                        reconnectionDelayMax = 5000
-                        // Timeout
-                        timeout = CONNECT_TIMEOUT_MS
-                    }
-
-                    logger.verbose { "Socket.IO options: transports=${options.transports.toList()}, reconnection=${options.reconnection}" }
-
-                    cleanupSocket(disconnect = true)
-
-                    // Create socket connection to base URL
-                    val currentSocket = IO.socket(client.baseURL, options)
-                    socket = currentSocket
-
-                    val initialConnectionGuard = ConnectionAttemptGuard()
-
-                    // Setup timeout
-                    val timeoutJob = scope.launch {
-                        delay(CONNECT_TIMEOUT_MS)
-                        initialConnectionGuard.finish {
-                            cleanupSocket(currentSocket, disconnect = true)
-                            _connectionState.value = ConnectionState.Disconnected
-                            if (continuation.isActive) {
-                                continuation.resumeWithException(
-                                    Exception("Connection timeout after ${CONNECT_TIMEOUT_MS}ms")
-                                )
-                            }
-                        }
-                    }
-
-                    continuation.invokeOnCancellation {
-                        initialConnectionGuard.finish {
-                            cleanupSocket(currentSocket, disconnect = true)
-                            _connectionState.value = ConnectionState.Disconnected
-                        }
-                    }
-
-                    currentSocket.apply {
-                        on(Socket.EVENT_CONNECT) {
-                            timeoutJob.cancel()
-                            _connectionState.value = ConnectionState.Connected
-                            logger.info("Connected to Socket.IO server")
-                            logger.debug("Socket ID: ${id()}")
-
-                            // Re-subscribe to channels on every connect (initial + reconnects)
-                            for (channel in subscribedChannels) {
-                                val subscribeData = JSONObject().apply {
-                                    put("channel", channel)
-                                }
-                                logOutgoing("realtime:subscribe", subscribeData)
-                                emit("realtime:subscribe", subscribeData)
-                            }
-
-                            notifyListeners("connect", null)
-
-                            initialConnectionGuard.finish {
-                                if (continuation.isActive) {
-                                    continuation.resume(Unit)
-                                }
-                            }
-                        }
-
-                        on(Socket.EVENT_CONNECT_ERROR) { args ->
-                            timeoutJob.cancel()
-                            val error = args.firstOrNull()?.toString() ?: "Unknown error"
-                            _connectionState.value = ConnectionState.Error(error)
-                            logger.error("Connection error: $error")
-                            logger.verbose { "Connection error details: ${args.toList()}" }
-
-                            notifyListeners("connect_error", error)
-
-                            initialConnectionGuard.finish {
-                                cleanupSocket(currentSocket, disconnect = true)
-                                if (continuation.isActive) {
-                                    continuation.resumeWithException(Exception(error))
-                                }
-                            }
-                        }
-
-                        on(Socket.EVENT_DISCONNECT) { args ->
-                            _connectionState.value = ConnectionState.Disconnected
-                            val reason = args.firstOrNull()?.toString() ?: "unknown"
-                            logger.info("Disconnected: $reason")
-                            notifyListeners("disconnect", reason)
-
-                            initialConnectionGuard.finish {
-                                cleanupSocket(currentSocket, disconnect = false)
-                                if (continuation.isActive) {
-                                    continuation.resumeWithException(
-                                        Exception("Disconnected before connection completed: $reason")
-                                    )
-                                }
-                            }
-                        }
-
-                        on("realtime:error") { args ->
-                            logIncoming("realtime:error", args.firstOrNull())
-                            val data = args.firstOrNull() as? JSONObject
-                            val error = RealtimeError(
-                                code = data?.optString("code") ?: "UNKNOWN",
-                                message = data?.optString("message") ?: "Unknown error"
-                            )
-                            logger.error("Realtime error: ${error.message}")
-                            notifyListeners("error", error)
-                        }
-
-                        // Listen for incoming realtime messages
-                        on("realtime:message") { args ->
-                            logIncoming("realtime:message", args.firstOrNull())
-                            handleIncomingEvent("realtime:message", args)
-                        }
-
-                        // Catch-all listener for all incoming events
-                        // This mirrors the TypeScript SDK's socket.onAny() behavior
-                        onAnyIncoming { args ->
-                            // args[0] is the event name, args[1:] are the actual arguments
-                            if (args.isNotEmpty()) {
-                                val eventName = args[0] as? String ?: return@onAnyIncoming
-                                // Skip already handled events
-                                if (eventName == "realtime:error") return@onAnyIncoming
-                                val eventArgs = if (args.size > 1) args.sliceArray(1 until args.size) else emptyArray()
-                                logIncoming(eventName, eventArgs.firstOrNull())
-                                handleIncomingEvent(eventName, eventArgs)
-                            }
-                        }
-
-                        // Connect
-                        logger.debug("Initiating socket connection...")
-                        connect()
-                    }
-
-                } catch (e: Exception) {
-                    _connectionState.value = ConnectionState.Error(e.message ?: "Failed to connect")
-                    cleanupSocket(disconnect = true)
-                    if (continuation.isActive) {
-                        continuation.resumeWithException(e)
-                    }
-                }
-            }
+        if (connectionJob == null) {
+            return
         }
 
         try {
-            connectJob?.await()
+            connectionJob.await()
         } finally {
-            connectJob = null
+            connectMutex.withLock {
+                if (connectJob === connectionJob) {
+                    connectJob = null
+                }
+            }
         }
     }
 
