@@ -97,6 +97,22 @@ class Realtime internal constructor(
     // Logger instance
     private val logger = insforgeLogger("InsForge.Realtime")
 
+    private fun cleanupSocket(targetSocket: Socket? = socket, disconnect: Boolean = true) {
+        targetSocket?.off()
+        if (disconnect) {
+            targetSocket?.disconnect()
+        }
+        if (socket === targetSocket) {
+            socket = null
+        }
+    }
+
+    private fun cancelPendingConnectionWork() {
+        connectJob?.cancel()
+        connectJob = null
+        scope.coroutineContext.cancelChildren()
+    }
+
     /**
      * Log an outgoing message
      * DEBUG: event name only
@@ -176,6 +192,8 @@ class Realtime internal constructor(
             }
         }
 
+        cancelPendingConnectionWork()
+
         connectJob = scope.async {
             suspendCancellableCoroutine { continuation ->
                 try {
@@ -206,18 +224,19 @@ class Realtime internal constructor(
 
                     logger.verbose { "Socket.IO options: transports=${options.transports.toList()}, reconnection=${options.reconnection}" }
 
-                    // Create socket connection to base URL
-                    socket = IO.socket(client.baseURL, options)
+                    cleanupSocket(disconnect = true)
 
-                    var initialConnection = true
+                    // Create socket connection to base URL
+                    val currentSocket = IO.socket(client.baseURL, options)
+                    socket = currentSocket
+
+                    val initialConnectionGuard = ConnectionAttemptGuard()
 
                     // Setup timeout
                     val timeoutJob = scope.launch {
                         delay(CONNECT_TIMEOUT_MS)
-                        if (initialConnection) {
-                            initialConnection = false
-                            socket?.disconnect()
-                            socket = null
+                        initialConnectionGuard.finish {
+                            cleanupSocket(currentSocket, disconnect = true)
                             _connectionState.value = ConnectionState.Disconnected
                             if (continuation.isActive) {
                                 continuation.resumeWithException(
@@ -227,7 +246,14 @@ class Realtime internal constructor(
                         }
                     }
 
-                    socket?.apply {
+                    continuation.invokeOnCancellation {
+                        initialConnectionGuard.finish {
+                            cleanupSocket(currentSocket, disconnect = true)
+                            _connectionState.value = ConnectionState.Disconnected
+                        }
+                    }
+
+                    currentSocket.apply {
                         on(Socket.EVENT_CONNECT) {
                             timeoutJob.cancel()
                             _connectionState.value = ConnectionState.Connected
@@ -245,8 +271,7 @@ class Realtime internal constructor(
 
                             notifyListeners("connect", null)
 
-                            if (initialConnection) {
-                                initialConnection = false
+                            initialConnectionGuard.finish {
                                 if (continuation.isActive) {
                                     continuation.resume(Unit)
                                 }
@@ -262,8 +287,8 @@ class Realtime internal constructor(
 
                             notifyListeners("connect_error", error)
 
-                            if (initialConnection) {
-                                initialConnection = false
+                            initialConnectionGuard.finish {
+                                cleanupSocket(currentSocket, disconnect = true)
                                 if (continuation.isActive) {
                                     continuation.resumeWithException(Exception(error))
                                 }
@@ -275,6 +300,15 @@ class Realtime internal constructor(
                             val reason = args.firstOrNull()?.toString() ?: "unknown"
                             logger.info("Disconnected: $reason")
                             notifyListeners("disconnect", reason)
+
+                            initialConnectionGuard.finish {
+                                cleanupSocket(currentSocket, disconnect = false)
+                                if (continuation.isActive) {
+                                    continuation.resumeWithException(
+                                        Exception("Disconnected before connection completed: $reason")
+                                    )
+                                }
+                            }
                         }
 
                         on("realtime:error") { args ->
@@ -315,6 +349,7 @@ class Realtime internal constructor(
 
                 } catch (e: Exception) {
                     _connectionState.value = ConnectionState.Error(e.message ?: "Failed to connect")
+                    cleanupSocket(disconnect = true)
                     if (continuation.isActive) {
                         continuation.resumeWithException(e)
                     }
@@ -322,16 +357,19 @@ class Realtime internal constructor(
             }
         }
 
-        connectJob?.await()
+        try {
+            connectJob?.await()
+        } finally {
+            connectJob = null
+        }
     }
 
     /**
      * Disconnect from the realtime server
      */
     fun disconnect() {
-        socket?.disconnect()
-        socket?.off()
-        socket = null
+        cancelPendingConnectionWork()
+        cleanupSocket(disconnect = true)
         subscribedChannels.clear()
         _connectionState.value = ConnectionState.Disconnected
     }
@@ -815,8 +853,8 @@ class Realtime internal constructor(
     override fun close() {
         channels.values.forEach { it.close() }
         channels.clear()
-        scope.cancel()
         disconnect()
+        scope.cancel()
     }
 }
 
