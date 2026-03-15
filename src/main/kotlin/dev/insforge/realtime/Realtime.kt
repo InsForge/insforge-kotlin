@@ -13,7 +13,6 @@ import io.ktor.client.request.*
 import io.ktor.client.statement.*
 import io.ktor.http.*
 import io.socket.client.IO
-import io.socket.client.Socket
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -69,7 +68,9 @@ import kotlin.coroutines.resumeWithException
  */
 class Realtime internal constructor(
     private val client: InsforgeClient,
-    private val config: RealtimeConfig
+    private val config: RealtimeConfig,
+    private val socketFactory: RealtimeSocketFactory = DefaultRealtimeSocketFactory,
+    private val connectTimeoutMs: Long = CONNECT_TIMEOUT_MS
 ) : InsforgePlugin<RealtimeConfig> {
 
     override val key: String = Realtime.key
@@ -78,7 +79,7 @@ class Realtime internal constructor(
     private val baseUrl = "${client.baseURL}/api/realtime"
 
     // Socket.IO client
-    private var socket: Socket? = null
+    private var socket: RealtimeSocket? = null
     private var connectJob: Deferred<Unit>? = null
     private val connectMutex = Mutex()
     private val subscribedChannels = ConcurrentHashMap.newKeySet<String>()
@@ -100,7 +101,7 @@ class Realtime internal constructor(
     // Logger instance
     private val logger = insforgeLogger("InsForge.Realtime")
 
-    private fun cleanupSocket(targetSocket: Socket? = socket, disconnect: Boolean = true) {
+    private fun cleanupSocket(targetSocket: RealtimeSocket? = socket, disconnect: Boolean = true) {
         targetSocket?.off()
         if (disconnect) {
             targetSocket?.disconnect()
@@ -167,7 +168,7 @@ class Realtime internal constructor(
      * Check if connected to the realtime server
      */
     val isConnected: Boolean
-        get() = socket?.connected() == true
+        get() = socket?.isConnected() == true
 
     /**
      * Get the socket ID (if connected)
@@ -183,12 +184,12 @@ class Realtime internal constructor(
      */
     suspend fun connect() {
         // Already connected
-        if (socket?.connected() == true) {
+        if (socket?.isConnected() == true) {
             return
         }
 
         val connectionJob = connectMutex.withLock {
-            if (socket?.connected() == true) {
+            if (socket?.isConnected() == true) {
                 return@withLock null
             }
 
@@ -220,7 +221,7 @@ class Realtime internal constructor(
                                 reconnectionDelay = 1000
                                 reconnectionDelayMax = 5000
                                 // Timeout
-                                timeout = CONNECT_TIMEOUT_MS
+                                timeout = connectTimeoutMs
                             }
 
                             logger.verbose { "Socket.IO options: transports=${options.transports.toList()}, reconnection=${options.reconnection}" }
@@ -228,20 +229,20 @@ class Realtime internal constructor(
                             cleanupSocket(disconnect = true)
 
                             // Create socket connection to base URL
-                            val currentSocket = IO.socket(client.baseURL, options)
+                            val currentSocket = socketFactory.create(client.baseURL, options)
                             socket = currentSocket
 
                             val initialConnectionGuard = ConnectionAttemptGuard()
 
                             // Setup timeout
                             val timeoutJob = scope.launch {
-                                delay(CONNECT_TIMEOUT_MS)
+                                delay(connectTimeoutMs)
                                 initialConnectionGuard.finish {
                                     cleanupSocket(currentSocket, disconnect = true)
                                     _connectionState.value = ConnectionState.Disconnected
                                     if (continuation.isActive) {
                                         continuation.resumeWithException(
-                                            Exception("Connection timeout after ${CONNECT_TIMEOUT_MS}ms")
+                                            Exception("Connection timeout after ${connectTimeoutMs}ms")
                                         )
                                     }
                                 }
@@ -255,7 +256,7 @@ class Realtime internal constructor(
                             }
 
                             currentSocket.apply {
-                                on(Socket.EVENT_CONNECT) {
+                                on(io.socket.client.Socket.EVENT_CONNECT) {
                                     timeoutJob.cancel()
                                     val completeInitialConnect = initialConnectionGuard.finish {
                                         _connectionState.value = ConnectionState.Connected
@@ -298,7 +299,7 @@ class Realtime internal constructor(
                                     notifyListeners("connect", null)
                                 }
 
-                                on(Socket.EVENT_CONNECT_ERROR) { args ->
+                                on(io.socket.client.Socket.EVENT_CONNECT_ERROR) { args ->
                                     timeoutJob.cancel()
                                     val error = args.firstOrNull()?.toString() ?: "Unknown error"
                                     val completeInitialConnect = initialConnectionGuard.finish {
@@ -324,7 +325,7 @@ class Realtime internal constructor(
                                     notifyListeners("connect_error", error)
                                 }
 
-                                on(Socket.EVENT_DISCONNECT) { args ->
+                                on(io.socket.client.Socket.EVENT_DISCONNECT) { args ->
                                     val reason = args.firstOrNull()?.toString() ?: "unknown"
                                     val completeInitialConnect = initialConnectionGuard.finish {
                                         _connectionState.value = ConnectionState.Disconnected
@@ -441,7 +442,7 @@ class Realtime internal constructor(
         }
 
         // Auto-connect if not connected
-        if (socket?.connected() != true) {
+        if (socket?.isConnected() != true) {
             logger.debug("Not connected, initiating connection...")
             try {
                 connect()
@@ -461,7 +462,7 @@ class Realtime internal constructor(
             }
             logOutgoing("realtime:subscribe", subscribeData)
 
-            socket?.emit("realtime:subscribe", arrayOf(subscribeData)) { args ->
+            socket?.emitWithAck("realtime:subscribe", subscribeData) { args ->
                 val response = args.firstOrNull() as? JSONObject
                 logIncoming("realtime:subscribe (ack)", response)
 
@@ -502,7 +503,7 @@ class Realtime internal constructor(
         logger.debug("unsubscribe() called for channel: $channel")
         subscribedChannels.remove(channel)
 
-        if (socket?.connected() == true) {
+        if (socket?.isConnected() == true) {
             val unsubscribeData = JSONObject().apply {
                 put("channel", channel)
             }
@@ -535,7 +536,7 @@ class Realtime internal constructor(
     fun publish(channel: String, event: String, payload: Map<String, Any>) {
         logger.debug("publish() called: channel='$channel', event='$event'")
 
-        if (socket?.connected() != true) {
+        if (socket?.isConnected() != true) {
             logger.error("Publish failed: not connected")
             throw IllegalStateException("Not connected to realtime server. Call connect() first.")
         }
