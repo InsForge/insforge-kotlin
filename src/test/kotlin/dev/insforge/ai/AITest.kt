@@ -166,9 +166,11 @@ class AITest {
                 messages = listOf(
                     ChatMessage.user("Count from 1 to 5")
                 )
-            ).collect { chunk ->
-                chunks.add(chunk)
-                print(chunk) // Print as it streams
+            ).collect { response ->
+                response.text?.let {
+                    chunks.add(it)
+                    print(it) // Print as it streams
+                }
             }
 
             println() // New line after streaming
@@ -191,7 +193,7 @@ class AITest {
     @Test
     fun `test streaming with system prompt`() = runTest {
         try {
-            val fullResponse = StringBuilder()
+            var lastResponse: ChatCompletionResponse? = null
 
             client.ai.chatCompletionStream(
                 model = "openai/gpt-4o-mini",
@@ -199,13 +201,61 @@ class AITest {
                     ChatMessage.user("Say hello")
                 ),
                 systemPrompt = "You are a pirate. Speak like one."
-            ).collect { chunk ->
-                fullResponse.append(chunk)
+            ).collect { response ->
+                lastResponse = response
             }
 
-            println("Pirate response: $fullResponse")
+            println("Pirate response: ${lastResponse?.text}")
         } catch (e: Exception) {
             println("Streaming with system prompt failed: ${e.message}")
+        }
+    }
+
+    @Test
+    fun `test streaming chat completion with tool calls`() = runTest {
+        try {
+            var finalResponse: ChatCompletionResponse? = null
+
+            client.ai.chatCompletionStream(
+                model = "openai/gpt-4o-mini",
+                messages = listOf(
+                    ChatMessage.user("What's the weather in Tokyo?")
+                ),
+                tools = listOf(
+                    Tool(
+                        type = "function",
+                        function = ToolFunction(
+                            name = "get_weather",
+                            description = "Get the current weather for a location",
+                            parameters = buildJsonObject {
+                                put("type", JsonPrimitive("object"))
+                                putJsonObject("properties") {
+                                    putJsonObject("location") {
+                                        put("type", JsonPrimitive("string"))
+                                        put("description", JsonPrimitive("City name"))
+                                    }
+                                }
+                                put("required", JsonArray(listOf(JsonPrimitive("location"))))
+                            }
+                        )
+                    )
+                ),
+                toolChoice = ToolChoice.Auto
+            ).collect { response ->
+                finalResponse = response
+            }
+
+            if (!finalResponse?.toolCalls.isNullOrEmpty()) {
+                val toolCall = finalResponse!!.toolCalls!!.first()
+                assertEquals("get_weather", toolCall.function.name)
+                println("Streamed tool call: ${toolCall.function.name}(${toolCall.function.arguments})")
+            } else {
+                println("Model chose not to call a tool (streamed text): ${finalResponse?.text}")
+            }
+        } catch (e: InsforgeHttpException) {
+            println("Streaming tool calling failed: ${e.message}")
+        } catch (e: Exception) {
+            println("Streaming tool calling failed with exception: ${e.message}")
         }
     }
 

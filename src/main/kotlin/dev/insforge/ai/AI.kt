@@ -293,7 +293,7 @@ class AI internal constructor(
         tools: List<Tool>? = null,
         toolChoice: ToolChoice? = null,
         parallelToolCalls: Boolean? = null
-    ): Flow<String> = flow {
+    ): Flow<ChatCompletionResponse> = flow {
         val response = client.httpClient.post("$baseUrl/chat/completion") {
             contentType(ContentType.Application.Json)
             setBody(ChatCompletionRequest(
@@ -313,6 +313,18 @@ class AI internal constructor(
             ))
         }
 
+        val contentBuilder = StringBuilder()
+        // Accumulates tool call data keyed by index.
+        // Each entry holds: id, type, and an arguments StringBuilder.
+        data class ToolCallAccumulator(
+            val index: Int,
+            var id: String? = null,
+            var type: String? = null,
+            var name: String? = null,
+            val arguments: StringBuilder = StringBuilder()
+        )
+        val toolCallMap = mutableMapOf<Int, ToolCallAccumulator>()
+
         val channel: ByteReadChannel = response.body()
         while (!channel.isClosedForRead) {
             val line = channel.readUTF8Line() ?: break
@@ -321,12 +333,56 @@ class AI internal constructor(
                 if (data != "[DONE]") {
                     try {
                         val chunk = Json.decodeFromString<StreamChunk>(data)
-                        chunk.choices.firstOrNull()?.delta?.content?.let { emit(it) }
+                        val delta = chunk.choices.firstOrNull()?.delta ?: continue
+
+                        // Accumulate text content and emit a partial response
+                        delta.content?.let {
+                            contentBuilder.append(it)
+                            emit(ChatCompletionResponse(text = contentBuilder.toString()))
+                        }
+
+                        // Accumulate tool call chunks by index
+                        delta.toolCalls?.forEach { streamToolCall ->
+                            val acc = toolCallMap.getOrPut(streamToolCall.index) {
+                                ToolCallAccumulator(index = streamToolCall.index)
+                            }
+                            streamToolCall.id?.let { acc.id = it }
+                            streamToolCall.type?.let { acc.type = it }
+                            streamToolCall.function?.name?.let { acc.name = it }
+                            streamToolCall.function?.arguments?.let { acc.arguments.append(it) }
+                        }
                     } catch (e: Exception) {
-                        // Ignore parsing errors
+                        // Ignore parsing errors for individual chunks
                     }
                 }
             }
+        }
+
+        // Build final ToolCall list from accumulated data and emit the complete response
+        val finalToolCalls = if (toolCallMap.isNotEmpty()) {
+            toolCallMap.values
+                .sortedBy { it.index }
+                .mapNotNull { acc ->
+                    val id = acc.id ?: return@mapNotNull null
+                    val type = acc.type ?: "function"
+                    val name = acc.name ?: return@mapNotNull null
+                    ToolCall(
+                        id = id,
+                        type = type,
+                        function = ToolCallFunction(
+                            name = name,
+                            arguments = acc.arguments.toString()
+                        )
+                    )
+                }
+                .takeIf { it.isNotEmpty() }
+        } else null
+
+        if (finalToolCalls != null || contentBuilder.isNotEmpty()) {
+            emit(ChatCompletionResponse(
+                text = contentBuilder.toString().ifEmpty { null },
+                toolCalls = finalToolCalls
+            ))
         }
     }
 
