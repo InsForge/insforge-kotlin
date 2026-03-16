@@ -79,6 +79,7 @@ class Realtime internal constructor(
     private val baseUrl = "${client.baseURL}/api/realtime"
 
     // Socket.IO client
+    @Volatile
     private var socket: RealtimeSocket? = null
     private var connectJob: Deferred<Unit>? = null
     private val connectMutex = Mutex()
@@ -114,7 +115,6 @@ class Realtime internal constructor(
     private fun cancelPendingConnectionWork() {
         connectJob?.cancel()
         connectJob = null
-        scope.coroutineContext.cancelChildren()
     }
 
     /**
@@ -135,6 +135,37 @@ class Realtime internal constructor(
     private fun logIncoming(event: String, data: Any?) {
         logger.debug("[<<<] RECV: event='$event'")
         data?.let { logger.verbose { "[<<<]   data: $it" } }
+    }
+
+    private fun replaySubscriptions(currentSocket: RealtimeSocket) {
+        for (channel in subscribedChannels) {
+            val subscribeData = JSONObject().apply {
+                put("channel", channel)
+            }
+            logOutgoing("realtime:subscribe", subscribeData)
+            currentSocket.emit("realtime:subscribe", subscribeData)
+        }
+    }
+
+    private fun handleSocketConnected(currentSocket: RealtimeSocket) {
+        _connectionState.value = ConnectionState.Connected
+        logger.info("Connected to Socket.IO server")
+        logger.debug("Socket ID: ${currentSocket.id()}")
+        replaySubscriptions(currentSocket)
+        notifyListeners("connect", null)
+    }
+
+    private fun handleSocketConnectError(error: String, details: List<Any?>) {
+        _connectionState.value = ConnectionState.Error(error)
+        logger.error("Connection error: $error")
+        logger.verbose { "Connection error details: $details" }
+        notifyListeners("connect_error", error)
+    }
+
+    private fun handleSocketDisconnected(reason: String) {
+        _connectionState.value = ConnectionState.Disconnected
+        logger.info("Disconnected: $reason")
+        notifyListeners("disconnect", reason)
     }
 
     companion object : InsforgePluginProvider<RealtimeConfig, Realtime> {
@@ -235,7 +266,7 @@ class Realtime internal constructor(
                             val initialConnectionGuard = ConnectionAttemptGuard()
 
                             // Setup timeout
-                            val timeoutJob = scope.launch {
+                            val timeoutJob = launch {
                                 delay(connectTimeoutMs)
                                 initialConnectionGuard.finish {
                                     cleanupSocket(currentSocket, disconnect = true)
@@ -259,21 +290,7 @@ class Realtime internal constructor(
                                 on(io.socket.client.Socket.EVENT_CONNECT) {
                                     timeoutJob.cancel()
                                     val completeInitialConnect = initialConnectionGuard.finish {
-                                        _connectionState.value = ConnectionState.Connected
-                                        logger.info("Connected to Socket.IO server")
-                                        logger.debug("Socket ID: ${id()}")
-
-                                        // Re-subscribe to channels on every connect (initial + reconnects)
-                                        for (channel in subscribedChannels) {
-                                            val subscribeData = JSONObject().apply {
-                                                put("channel", channel)
-                                            }
-                                            logOutgoing("realtime:subscribe", subscribeData)
-                                            emit("realtime:subscribe", subscribeData)
-                                        }
-
-                                        notifyListeners("connect", null)
-
+                                        handleSocketConnected(currentSocket)
                                         if (continuation.isActive) {
                                             continuation.resume(Unit)
                                         }
@@ -283,32 +300,15 @@ class Realtime internal constructor(
                                         return@on
                                     }
 
-                                    _connectionState.value = ConnectionState.Connected
-                                    logger.info("Connected to Socket.IO server")
-                                    logger.debug("Socket ID: ${id()}")
-
-                                    // Re-subscribe to channels on every connect (initial + reconnects)
-                                    for (channel in subscribedChannels) {
-                                        val subscribeData = JSONObject().apply {
-                                            put("channel", channel)
-                                        }
-                                        logOutgoing("realtime:subscribe", subscribeData)
-                                        emit("realtime:subscribe", subscribeData)
-                                    }
-
-                                    notifyListeners("connect", null)
+                                    handleSocketConnected(currentSocket)
                                 }
 
                                 on(io.socket.client.Socket.EVENT_CONNECT_ERROR) { args ->
                                     timeoutJob.cancel()
                                     val error = args.firstOrNull()?.toString() ?: "Unknown error"
+                                    val errorDetails = args.toList()
                                     val completeInitialConnect = initialConnectionGuard.finish {
-                                        _connectionState.value = ConnectionState.Error(error)
-                                        logger.error("Connection error: $error")
-                                        logger.verbose { "Connection error details: ${args.toList()}" }
-
-                                        notifyListeners("connect_error", error)
-
+                                        handleSocketConnectError(error, errorDetails)
                                         cleanupSocket(currentSocket, disconnect = true)
                                         if (continuation.isActive) {
                                             continuation.resumeWithException(Exception(error))
@@ -319,19 +319,13 @@ class Realtime internal constructor(
                                         return@on
                                     }
 
-                                    _connectionState.value = ConnectionState.Error(error)
-                                    logger.error("Connection error: $error")
-                                    logger.verbose { "Connection error details: ${args.toList()}" }
-                                    notifyListeners("connect_error", error)
+                                    handleSocketConnectError(error, errorDetails)
                                 }
 
                                 on(io.socket.client.Socket.EVENT_DISCONNECT) { args ->
                                     val reason = args.firstOrNull()?.toString() ?: "unknown"
                                     val completeInitialConnect = initialConnectionGuard.finish {
-                                        _connectionState.value = ConnectionState.Disconnected
-                                        logger.info("Disconnected: $reason")
-                                        notifyListeners("disconnect", reason)
-
+                                        handleSocketDisconnected(reason)
                                         cleanupSocket(currentSocket, disconnect = false)
                                         if (continuation.isActive) {
                                             continuation.resumeWithException(
@@ -344,9 +338,7 @@ class Realtime internal constructor(
                                         return@on
                                     }
 
-                                    _connectionState.value = ConnectionState.Disconnected
-                                    logger.info("Disconnected: $reason")
-                                    notifyListeners("disconnect", reason)
+                                    handleSocketDisconnected(reason)
                                 }
 
                                 on("realtime:error") { args ->
