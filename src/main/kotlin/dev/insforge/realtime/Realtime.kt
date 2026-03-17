@@ -323,6 +323,7 @@ class Realtime internal constructor(
                                 }
 
                                 on(io.socket.client.Socket.EVENT_DISCONNECT) { args ->
+                                    timeoutJob.cancel()
                                     val reason = args.firstOrNull()?.toString() ?: "unknown"
                                     val completeInitialConnect = initialConnectionGuard.finish {
                                         handleSocketDisconnected(reason)
