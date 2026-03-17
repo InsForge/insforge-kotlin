@@ -68,6 +68,8 @@ internal class InsforgeChannelImpl(
      * Setup event listeners for INSERT/UPDATE/DELETE events
      */
     private fun setupEventListeners() {
+        removeEventListeners()
+
         // Listen for INSERT events
         insertListener = Realtime.EventCallback<dev.insforge.realtime.models.SocketMessage> { message ->
             message?.let { handleSocketMessage("INSERT", it) }
