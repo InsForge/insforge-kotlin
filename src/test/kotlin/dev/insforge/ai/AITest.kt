@@ -213,50 +213,43 @@ class AITest {
 
     @Test
     fun `test streaming chat completion with tool calls`() = runTest {
-        try {
-            var finalResponse: ChatCompletionResponse? = null
+        var toolCalls: List<ToolCall>? = null
 
-            client.ai.chatCompletionStream(
-                model = "openai/gpt-4o-mini",
-                messages = listOf(
-                    ChatMessage.user("What's the weather in Tokyo?")
-                ),
-                tools = listOf(
-                    Tool(
-                        type = "function",
-                        function = ToolFunction(
-                            name = "get_weather",
-                            description = "Get the current weather for a location",
-                            parameters = buildJsonObject {
-                                put("type", JsonPrimitive("object"))
-                                putJsonObject("properties") {
-                                    putJsonObject("location") {
-                                        put("type", JsonPrimitive("string"))
-                                        put("description", JsonPrimitive("City name"))
-                                    }
+        client.ai.chatCompletionStream(
+            model = "openai/gpt-4o-mini",
+            messages = listOf(
+                ChatMessage.user("What's the weather in Tokyo?")
+            ),
+            tools = listOf(
+                Tool(
+                    type = "function",
+                    function = ToolFunction(
+                        name = "get_weather",
+                        description = "Get the current weather for a location",
+                        parameters = buildJsonObject {
+                            put("type", JsonPrimitive("object"))
+                            putJsonObject("properties") {
+                                putJsonObject("location") {
+                                    put("type", JsonPrimitive("string"))
+                                    put("description", JsonPrimitive("City name"))
                                 }
-                                put("required", JsonArray(listOf(JsonPrimitive("location"))))
                             }
-                        )
+                            put("required", JsonArray(listOf(JsonPrimitive("location"))))
+                        }
                     )
-                ),
-                toolChoice = ToolChoice.Auto
-            ).collect { response ->
-                finalResponse = response
+                )
+            ),
+            toolChoice = ToolChoice.Required
+        ).collect { response ->
+            if (!response.toolCalls.isNullOrEmpty()) {
+                toolCalls = response.toolCalls
             }
-
-            if (!finalResponse?.toolCalls.isNullOrEmpty()) {
-                val toolCall = finalResponse!!.toolCalls!!.first()
-                assertEquals("get_weather", toolCall.function.name)
-                println("Streamed tool call: ${toolCall.function.name}(${toolCall.function.arguments})")
-            } else {
-                println("Model chose not to call a tool (streamed text): ${finalResponse?.text}")
-            }
-        } catch (e: InsforgeHttpException) {
-            println("Streaming tool calling failed: ${e.message}")
-        } catch (e: Exception) {
-            println("Streaming tool calling failed with exception: ${e.message}")
         }
+
+        assertNotNull(toolCalls, "Expected tool calls but got none")
+        val toolCall = toolCalls!!.first()
+        assertEquals("get_weather", toolCall.function.name)
+        println("Streamed tool call: ${toolCall.function.name}(${toolCall.function.arguments})")
     }
 
     // ============ Image Generation Tests ============

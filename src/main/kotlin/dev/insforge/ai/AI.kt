@@ -335,10 +335,10 @@ class AI internal constructor(
                         val chunk = Json.decodeFromString<StreamChunk>(data)
                         val delta = chunk.choices.firstOrNull()?.delta ?: continue
 
-                        // Accumulate text content and emit a partial response
+                        // Emit delta text chunk and accumulate for final response
                         delta.content?.let {
                             contentBuilder.append(it)
-                            emit(ChatCompletionResponse(text = contentBuilder.toString()))
+                            emit(ChatCompletionResponse(text = it))
                         }
 
                         // Accumulate tool call chunks by index
