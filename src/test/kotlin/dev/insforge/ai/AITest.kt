@@ -166,11 +166,9 @@ class AITest {
                 messages = listOf(
                     ChatMessage.user("Count from 1 to 5")
                 )
-            ).collect { response ->
-                response.text?.let {
-                    chunks.add(it)
-                    print(it) // Print as it streams
-                }
+            ).collect { chunk ->
+                chunks.add(chunk)
+                print(chunk) // Print as it streams
             }
 
             println() // New line after streaming
@@ -193,7 +191,7 @@ class AITest {
     @Test
     fun `test streaming with system prompt`() = runTest {
         try {
-            var lastResponse: ChatCompletionResponse? = null
+            var lastResponse: String? = null
 
             client.ai.chatCompletionStream(
                 model = "openai/gpt-4o-mini",
@@ -201,11 +199,11 @@ class AITest {
                     ChatMessage.user("Say hello")
                 ),
                 systemPrompt = "You are a pirate. Speak like one."
-            ).collect { response ->
-                lastResponse = response
+            ).collect { chunk ->
+                lastResponse = (lastResponse ?: "") + chunk
             }
 
-            println("Pirate response: ${lastResponse?.text}")
+            println("Pirate response: $lastResponse")
         } catch (e: Exception) {
             println("Streaming with system prompt failed: ${e.message}")
         }
@@ -215,7 +213,7 @@ class AITest {
     fun `test streaming chat completion with tool calls`() = runTest {
         var toolCalls: List<ToolCall>? = null
 
-        client.ai.chatCompletionStream(
+        client.ai.chatCompletionStreamWithToolCalls(
             model = "openai/gpt-4o-mini",
             messages = listOf(
                 ChatMessage.user("What's the weather in Tokyo?")

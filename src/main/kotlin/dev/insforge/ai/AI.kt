@@ -278,9 +278,80 @@ class AI internal constructor(
      * @param tools List of tools the model may call
      * @param toolChoice Controls which tool the model should call
      * @param parallelToolCalls Allow the model to call multiple tools in parallel
-     * @return Flow of streaming chunks
+     * @return Flow of streaming text chunks
      */
     fun chatCompletionStream(
+        model: String,
+        messages: List<ChatMessage>,
+        temperature: Double? = null,
+        maxTokens: Int? = null,
+        topP: Double? = null,
+        systemPrompt: String? = null,
+        webSearch: WebSearchPlugin? = null,
+        fileParser: FileParserPlugin? = null,
+        thinking: Boolean? = null,
+        tools: List<Tool>? = null,
+        toolChoice: ToolChoice? = null,
+        parallelToolCalls: Boolean? = null
+    ): Flow<String> = flow {
+        val response = client.httpClient.post("$baseUrl/chat/completion") {
+            contentType(ContentType.Application.Json)
+            setBody(ChatCompletionRequest(
+                model = model,
+                messages = messages,
+                stream = true,
+                temperature = temperature,
+                maxTokens = maxTokens,
+                topP = topP,
+                systemPrompt = systemPrompt,
+                webSearch = webSearch,
+                fileParser = fileParser,
+                thinking = thinking,
+                tools = tools,
+                toolChoice = toolChoice,
+                parallelToolCalls = parallelToolCalls
+            ))
+        }
+
+        val channel: ByteReadChannel = response.body()
+        while (!channel.isClosedForRead) {
+            val line = channel.readUTF8Line() ?: break
+            if (line.startsWith("data: ")) {
+                val data = line.removePrefix("data: ")
+                if (data != "[DONE]") {
+                    try {
+                        val chunk = Json.decodeFromString<StreamChunk>(data)
+                        chunk.choices.firstOrNull()?.delta?.content?.let { emit(it) }
+                    } catch (e: Exception) {
+                        // Ignore parsing errors for individual chunks
+                    }
+                }
+            }
+        }
+    }
+
+    /**
+     * Generate chat completion with streaming, with support for tool calls.
+     *
+     * Text delta chunks are emitted as they arrive. Once the stream ends, a final
+     * [ChatCompletionResponse] containing the assembled [ToolCall] list is emitted.
+     *
+     * @param model Model identifier
+     * @param messages List of chat messages
+     * @param temperature Controls randomness (0-2)
+     * @param maxTokens Maximum tokens to generate
+     * @param topP Nucleus sampling parameter
+     * @param systemPrompt Optional system prompt
+     * @param webSearch Web search plugin configuration
+     * @param fileParser File parser plugin configuration
+     * @param thinking Enable extended reasoning capabilities
+     * @param tools List of tools the model may call
+     * @param toolChoice Controls which tool the model should call
+     * @param parallelToolCalls Allow the model to call multiple tools in parallel
+     * @return Flow of [ChatCompletionResponse] — delta text chunks during streaming,
+     *         then a final emission with assembled tool calls
+     */
+    fun chatCompletionStreamWithToolCalls(
         model: String,
         messages: List<ChatMessage>,
         temperature: Double? = null,
@@ -313,9 +384,7 @@ class AI internal constructor(
             ))
         }
 
-        val contentBuilder = StringBuilder()
         // Accumulates tool call data keyed by index.
-        // Each entry holds: id, type, and an arguments StringBuilder.
         data class ToolCallAccumulator(
             val index: Int,
             var id: String? = null,
@@ -335,11 +404,8 @@ class AI internal constructor(
                         val chunk = Json.decodeFromString<StreamChunk>(data)
                         val delta = chunk.choices.firstOrNull()?.delta ?: continue
 
-                        // Emit delta text chunk and accumulate for final response
-                        delta.content?.let {
-                            contentBuilder.append(it)
-                            emit(ChatCompletionResponse(text = it))
-                        }
+                        // Emit each delta text chunk directly (not accumulated)
+                        delta.content?.let { emit(ChatCompletionResponse(text = it)) }
 
                         // Accumulate tool call chunks by index
                         delta.toolCalls?.forEach { streamToolCall ->
@@ -358,9 +424,9 @@ class AI internal constructor(
             }
         }
 
-        // Build final ToolCall list from accumulated data and emit the complete response
-        val finalToolCalls = if (toolCallMap.isNotEmpty()) {
-            toolCallMap.values
+        // Emit final response with assembled tool calls (only if any were collected)
+        if (toolCallMap.isNotEmpty()) {
+            val finalToolCalls = toolCallMap.values
                 .sortedBy { it.index }
                 .mapNotNull { acc ->
                     val id = acc.id ?: return@mapNotNull null
@@ -375,14 +441,9 @@ class AI internal constructor(
                         )
                     )
                 }
-                .takeIf { it.isNotEmpty() }
-        } else null
-
-        if (finalToolCalls != null || contentBuilder.isNotEmpty()) {
-            emit(ChatCompletionResponse(
-                text = contentBuilder.toString().ifEmpty { null },
-                toolCalls = finalToolCalls
-            ))
+            if (finalToolCalls.isNotEmpty()) {
+                emit(ChatCompletionResponse(toolCalls = finalToolCalls))
+            }
         }
     }
 
