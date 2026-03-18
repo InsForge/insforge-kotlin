@@ -321,7 +321,7 @@ class AI internal constructor(
                 if (data != "[DONE]") {
                     try {
                         val chunk = Json.decodeFromString<StreamChunk>(data)
-                        chunk.choices.firstOrNull()?.delta?.content?.let { emit(it) }
+                        chunk.choices?.firstOrNull()?.delta?.content?.let { emit(it) }
                     } catch (e: Exception) {
                         // Ignore parsing errors for individual chunks
                     }
@@ -402,13 +402,14 @@ class AI internal constructor(
                 if (data != "[DONE]") {
                     try {
                         val chunk = Json.decodeFromString<StreamChunk>(data)
-                        val delta = chunk.choices.firstOrNull()?.delta ?: continue
 
-                        // Emit each delta text chunk directly (not accumulated)
-                        delta.content?.let { emit(ChatCompletionResponse(text = it)) }
+                        // Format 1: choices[].delta (OpenAI-style streaming)
+                        val delta = chunk.choices?.firstOrNull()?.delta
+                        delta?.content?.let { emit(ChatCompletionResponse(text = it)) }
+                        val toolCallSource = delta?.toolCalls ?: chunk.toolCalls
 
                         // Accumulate tool call chunks by index
-                        delta.toolCalls?.forEach { streamToolCall ->
+                        toolCallSource?.forEach { streamToolCall ->
                             val acc = toolCallMap.getOrPut(streamToolCall.index) {
                                 ToolCallAccumulator(index = streamToolCall.index)
                             }

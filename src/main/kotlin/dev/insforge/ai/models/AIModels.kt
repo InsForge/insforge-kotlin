@@ -559,7 +559,7 @@ data class StreamToolCallFunction(
  */
 @Serializable
 data class StreamToolCall(
-    val index: Int,
+    val index: Int = 0,
     val id: String? = null,
     val type: String? = null,
     val function: StreamToolCallFunction? = null
@@ -567,7 +567,11 @@ data class StreamToolCall(
 
 @Serializable
 data class StreamChunk(
-    val choices: List<StreamChoice>
+    val choices: List<StreamChoice>? = null,
+    @SerialName("tool_calls")
+    val toolCalls: List<StreamToolCall>? = null,
+    val done: Boolean? = null,
+    val tokenUsage: TokenUsage? = null
 )
 
 @Serializable

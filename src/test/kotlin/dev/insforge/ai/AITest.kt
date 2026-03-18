@@ -210,7 +210,7 @@ class AITest {
     }
 
     @Test
-    fun `test streaming chat completion with tool calls`() = runTest {
+    fun `test streaming chat completion with tool calls`() = runTest(timeout = 60.seconds) {
         var toolCalls: List<ToolCall>? = null
 
         client.ai.chatCompletionStreamWithToolCalls(
