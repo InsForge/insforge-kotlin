@@ -4,11 +4,13 @@ import dev.insforge.TestConfig
 import dev.insforge.exceptions.InsforgeHttpException
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.Serializable
+import org.junit.jupiter.api.Tag
 import kotlin.test.*
 
 /**
  * Integration tests for Functions module
  */
+@Tag("integration")
 class FunctionsTest {
 
     private lateinit var client: dev.insforge.InsforgeClient

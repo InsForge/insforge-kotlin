@@ -6,11 +6,13 @@ import io.ktor.client.request.*
 import io.ktor.client.statement.*
 import io.ktor.http.*
 import kotlinx.coroutines.test.runTest
+import org.junit.jupiter.api.Tag
 import kotlin.test.Test
 
 /**
  * Test to capture raw API responses for model adjustment
  */
+@Tag("integration")
 class ApiResponseTest {
 
     private val baseURL = "https://pg6afqz9.us-east.insforge.app"

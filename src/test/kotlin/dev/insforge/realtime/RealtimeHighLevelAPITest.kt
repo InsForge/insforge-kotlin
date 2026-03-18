@@ -13,6 +13,7 @@ import kotlinx.serialization.json.addJsonObject
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
+import org.junit.jupiter.api.Tag
 import kotlin.test.*
 import kotlin.time.Duration.Companion.seconds
 
@@ -22,6 +23,7 @@ import kotlin.time.Duration.Companion.seconds
  * Tests the InsforgeChannel, broadcastFlow, and postgresChangeFlow APIs
  * for monitoring database changes on the todos table.
  */
+@Tag("integration")
 class RealtimeHighLevelAPITest {
 
     private lateinit var client: dev.insforge.InsforgeClient

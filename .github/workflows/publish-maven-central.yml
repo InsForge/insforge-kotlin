@@ -38,10 +38,10 @@ jobs:
           sed -i "s/version = \".*\"/version = \"$VERSION\"/" build.gradle.kts
 
       - name: Build
-        run: ./gradlew clean build -x test
+        run: ./gradlew clean build
 
       - name: Publish to Maven Central
-        run: ./gradlew publishAndReleaseToMavenCentral -x test
+        run: ./gradlew publishAndReleaseToMavenCentral
         env:
           ORG_GRADLE_PROJECT_mavenCentralUsername: ${{ secrets.MAVEN_CENTRAL_USERNAME }}
           ORG_GRADLE_PROJECT_mavenCentralPassword: ${{ secrets.MAVEN_CENTRAL_PASSWORD }}

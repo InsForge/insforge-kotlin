@@ -35,8 +35,11 @@ jobs:
         run: |
           sed -i "s/version = \".*\"/version = \"${{ github.event.inputs.version }}\"/" build.gradle.kts
 
-      - name: Build and Publish to GitHub Packages
-        run: ./gradlew clean publishAllPublicationsToGitHubPackagesRepository -x test
+      - name: Build
+        run: ./gradlew clean build
+
+      - name: Publish to GitHub Packages
+        run: ./gradlew publishAllPublicationsToGitHubPackagesRepository
         env:
           GITHUB_ACTOR: ${{ github.actor }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

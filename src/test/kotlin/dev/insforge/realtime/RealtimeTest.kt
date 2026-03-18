@@ -18,6 +18,7 @@ import kotlinx.serialization.json.addJsonObject
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
+import org.junit.jupiter.api.Tag
 import kotlin.test.*
 import kotlin.time.Duration.Companion.seconds
 
@@ -28,6 +29,7 @@ import kotlin.time.Duration.Companion.seconds
  * - Low-level: connect/disconnect, subscribe/publish, channel management (REST)
  * - High-level: InsforgeChannel, broadcastFlow, postgresChangeFlow, PostgresAction
  */
+@Tag("integration")
 class RealtimeTest {
 
     private lateinit var client: dev.insforge.InsforgeClient

@@ -4,11 +4,13 @@ import dev.insforge.TestConfig
 import dev.insforge.auth.models.OAuthProvider
 import dev.insforge.exceptions.InsforgeHttpException
 import kotlinx.coroutines.test.runTest
+import org.junit.jupiter.api.Tag
 import kotlin.test.*
 
 /**
  * Integration tests for Auth module
  */
+@Tag("integration")
 class AuthTest {
 
     private lateinit var client: dev.insforge.InsforgeClient

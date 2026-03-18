@@ -56,7 +56,7 @@ dependencies {
     implementation("io.socket:socket.io-client:2.1.1")
 
     // Testing
-    testImplementation("org.jetbrains.kotlin:kotlin-test")
+    testImplementation("org.jetbrains.kotlin:kotlin-test-junit5")
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.7.3")
     testImplementation("io.ktor:ktor-client-mock:2.3.7")
 }
@@ -110,13 +110,33 @@ tasks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinCompile> {
     }
 }
 
-tasks.withType<Test> {
-    useJUnitPlatform()
+tasks.withType<Test>().configureEach {
+    useJUnitPlatform {
+        // `test` is our unit-test task in CI; integration tests run via `integrationTest`.
+        if (name == "test") {
+            excludeTags("integration")
+        }
+    }
+
     // Show test output including HTTP logs
     testLogging {
         showStandardStreams = true
         events("passed", "skipped", "failed")
     }
+}
+
+val integrationTest by tasks.registering(Test::class) {
+    description = "Runs integration tests that depend on external services"
+    group = LifecycleBasePlugin.VERIFICATION_GROUP
+
+    testClassesDirs = sourceSets["test"].output.classesDirs
+    classpath = sourceSets["test"].runtimeClasspath
+
+    useJUnitPlatform {
+        includeTags("integration")
+    }
+
+    shouldRunAfter(tasks.named("test"))
 }
 
 // Ensure all Jar tasks depend on generateVersionFile
