@@ -278,7 +278,7 @@ class AI internal constructor(
      * @param tools List of tools the model may call
      * @param toolChoice Controls which tool the model should call
      * @param parallelToolCalls Allow the model to call multiple tools in parallel
-     * @return Flow of streaming chunks
+     * @return Flow of streaming text chunks
      */
     fun chatCompletionStream(
         model: String,
@@ -321,11 +321,129 @@ class AI internal constructor(
                 if (data != "[DONE]") {
                     try {
                         val chunk = Json.decodeFromString<StreamChunk>(data)
-                        chunk.choices.firstOrNull()?.delta?.content?.let { emit(it) }
+                        chunk.choices?.firstOrNull()?.delta?.content?.let { emit(it) }
                     } catch (e: Exception) {
-                        // Ignore parsing errors
+                        // Ignore parsing errors for individual chunks
                     }
                 }
+            }
+        }
+    }
+
+    /**
+     * Generate chat completion with streaming, with support for tool calls.
+     *
+     * Text delta chunks are emitted as they arrive. Once the stream ends, a final
+     * [ChatCompletionResponse] containing the assembled [ToolCall] list is emitted.
+     *
+     * @param model Model identifier
+     * @param messages List of chat messages
+     * @param temperature Controls randomness (0-2)
+     * @param maxTokens Maximum tokens to generate
+     * @param topP Nucleus sampling parameter
+     * @param systemPrompt Optional system prompt
+     * @param webSearch Web search plugin configuration
+     * @param fileParser File parser plugin configuration
+     * @param thinking Enable extended reasoning capabilities
+     * @param tools List of tools the model may call
+     * @param toolChoice Controls which tool the model should call
+     * @param parallelToolCalls Allow the model to call multiple tools in parallel
+     * @return Flow of [ChatCompletionResponse] — delta text chunks during streaming,
+     *         then a final emission with assembled tool calls
+     */
+    fun chatCompletionStreamWithToolCalls(
+        model: String,
+        messages: List<ChatMessage>,
+        temperature: Double? = null,
+        maxTokens: Int? = null,
+        topP: Double? = null,
+        systemPrompt: String? = null,
+        webSearch: WebSearchPlugin? = null,
+        fileParser: FileParserPlugin? = null,
+        thinking: Boolean? = null,
+        tools: List<Tool>? = null,
+        toolChoice: ToolChoice? = null,
+        parallelToolCalls: Boolean? = null
+    ): Flow<ChatCompletionResponse> = flow {
+        val response = client.httpClient.post("$baseUrl/chat/completion") {
+            contentType(ContentType.Application.Json)
+            setBody(ChatCompletionRequest(
+                model = model,
+                messages = messages,
+                stream = true,
+                temperature = temperature,
+                maxTokens = maxTokens,
+                topP = topP,
+                systemPrompt = systemPrompt,
+                webSearch = webSearch,
+                fileParser = fileParser,
+                thinking = thinking,
+                tools = tools,
+                toolChoice = toolChoice,
+                parallelToolCalls = parallelToolCalls
+            ))
+        }
+
+        // Accumulates tool call data keyed by index.
+        data class ToolCallAccumulator(
+            val index: Int,
+            var id: String? = null,
+            var type: String? = null,
+            var name: String? = null,
+            val arguments: StringBuilder = StringBuilder()
+        )
+        val toolCallMap = mutableMapOf<Int, ToolCallAccumulator>()
+
+        val channel: ByteReadChannel = response.body()
+        while (!channel.isClosedForRead) {
+            val line = channel.readUTF8Line() ?: break
+            if (line.startsWith("data: ")) {
+                val data = line.removePrefix("data: ")
+                if (data != "[DONE]") {
+                    try {
+                        val chunk = Json.decodeFromString<StreamChunk>(data)
+
+                        // Format 1: choices[].delta (OpenAI-style streaming)
+                        val delta = chunk.choices?.firstOrNull()?.delta
+                        delta?.content?.let { emit(ChatCompletionResponse(text = it)) }
+                        val toolCallSource = delta?.toolCalls ?: chunk.toolCalls
+
+                        // Accumulate tool call chunks by index
+                        toolCallSource?.forEach { streamToolCall ->
+                            val acc = toolCallMap.getOrPut(streamToolCall.index) {
+                                ToolCallAccumulator(index = streamToolCall.index)
+                            }
+                            streamToolCall.id?.let { acc.id = it }
+                            streamToolCall.type?.let { acc.type = it }
+                            streamToolCall.function?.name?.let { acc.name = it }
+                            streamToolCall.function?.arguments?.let { acc.arguments.append(it) }
+                        }
+                    } catch (e: Exception) {
+                        // Ignore parsing errors for individual chunks
+                    }
+                }
+            }
+        }
+
+        // Emit final response with assembled tool calls (only if any were collected)
+        if (toolCallMap.isNotEmpty()) {
+            val finalToolCalls = toolCallMap.values
+                .sortedBy { it.index }
+                .mapNotNull { acc ->
+                    val id = acc.id ?: return@mapNotNull null
+                    val type = acc.type ?: "function"
+                    val name = acc.name ?: return@mapNotNull null
+                    ToolCall(
+                        id = id,
+                        type = type,
+                        function = ToolCallFunction(
+                            name = name,
+                            arguments = acc.arguments.toString()
+                        )
+                    )
+                }
+            if (finalToolCalls.isNotEmpty()) {
+                emit(ChatCompletionResponse(toolCalls = finalToolCalls))
             }
         }
     }

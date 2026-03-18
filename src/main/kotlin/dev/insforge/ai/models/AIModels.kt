@@ -542,9 +542,36 @@ data class TokenUsage(
 
 // ============ Streaming Models ============
 
+/**
+ * Partial function data received during a streaming tool call.
+ * Both fields may be null or incomplete until the stream is done.
+ */
+@Serializable
+data class StreamToolCallFunction(
+    val name: String? = null,
+    val arguments: String? = null
+)
+
+/**
+ * A single tool call chunk received during streaming.
+ * [index] identifies which tool call this chunk belongs to (for parallel tool calls).
+ * [id] is only present on the first chunk for a given tool call.
+ */
+@Serializable
+data class StreamToolCall(
+    val index: Int = 0,
+    val id: String? = null,
+    val type: String? = null,
+    val function: StreamToolCallFunction? = null
+)
+
 @Serializable
 data class StreamChunk(
-    val choices: List<StreamChoice>
+    val choices: List<StreamChoice>? = null,
+    @SerialName("tool_calls")
+    val toolCalls: List<StreamToolCall>? = null,
+    val done: Boolean? = null,
+    val tokenUsage: TokenUsage? = null
 )
 
 @Serializable
@@ -554,7 +581,9 @@ data class StreamChoice(
 
 @Serializable
 data class StreamDelta(
-    val content: String? = null
+    val content: String? = null,
+    @SerialName("tool_calls")
+    val toolCalls: List<StreamToolCall>? = null
 )
 
 // ============ Image Generation Models ============

@@ -191,7 +191,7 @@ class AITest {
     @Test
     fun `test streaming with system prompt`() = runTest {
         try {
-            val fullResponse = StringBuilder()
+            var lastResponse: String? = null
 
             client.ai.chatCompletionStream(
                 model = "openai/gpt-4o-mini",
@@ -200,13 +200,54 @@ class AITest {
                 ),
                 systemPrompt = "You are a pirate. Speak like one."
             ).collect { chunk ->
-                fullResponse.append(chunk)
+                lastResponse = (lastResponse ?: "") + chunk
             }
 
-            println("Pirate response: $fullResponse")
+            println("Pirate response: $lastResponse")
         } catch (e: Exception) {
             println("Streaming with system prompt failed: ${e.message}")
         }
+    }
+
+    @Test
+    fun `test streaming chat completion with tool calls`() = runTest(timeout = 60.seconds) {
+        var toolCalls: List<ToolCall>? = null
+
+        client.ai.chatCompletionStreamWithToolCalls(
+            model = "openai/gpt-4o-mini",
+            messages = listOf(
+                ChatMessage.user("What's the weather in Tokyo?")
+            ),
+            tools = listOf(
+                Tool(
+                    type = "function",
+                    function = ToolFunction(
+                        name = "get_weather",
+                        description = "Get the current weather for a location",
+                        parameters = buildJsonObject {
+                            put("type", JsonPrimitive("object"))
+                            putJsonObject("properties") {
+                                putJsonObject("location") {
+                                    put("type", JsonPrimitive("string"))
+                                    put("description", JsonPrimitive("City name"))
+                                }
+                            }
+                            put("required", JsonArray(listOf(JsonPrimitive("location"))))
+                        }
+                    )
+                )
+            ),
+            toolChoice = ToolChoice.Required
+        ).collect { response ->
+            if (!response.toolCalls.isNullOrEmpty()) {
+                toolCalls = response.toolCalls
+            }
+        }
+
+        assertNotNull(toolCalls, "Expected tool calls but got none")
+        val toolCall = toolCalls!!.first()
+        assertEquals("get_weather", toolCall.function.name)
+        println("Streamed tool call: ${toolCall.function.name}(${toolCall.function.arguments})")
     }
 
     // ============ Image Generation Tests ============
