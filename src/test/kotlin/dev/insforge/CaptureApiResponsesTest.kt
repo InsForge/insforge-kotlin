@@ -15,8 +15,8 @@ import kotlin.test.Test
 @Tag("integration")
 class CaptureApiResponsesTest {
 
-    private val baseURL = "https://pg6afqz9.us-east.insforge.app"
-    private val anonKey = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3OC0xMjM0LTU2NzgtOTBhYi1jZGVmMTIzNDU2NzgiLCJlbWFpbCI6ImFub25AaW5zZm9yZ2UuY29tIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Njc5MDc5MzJ9.K0semVtcacV55qeEhVUI3WKWzT7p87JU7wNzdXysRWo"
+    private val baseURL = TestConfig.BASE_URL
+    private val anonKey = TestConfig.ANON_KEY
 
     private val httpClient = HttpClient(OkHttp) {
         expectSuccess = false

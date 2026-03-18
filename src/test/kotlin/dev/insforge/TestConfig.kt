@@ -9,13 +9,22 @@ import dev.insforge.storage.Storage
 import dev.insforge.logging.InsforgeLogLevel
 
 /**
- * Test configuration for Insforge SDK integration tests
+ * Test configuration for Insforge SDK integration tests.
+ *
+ * Values are read from environment variables when available (CI),
+ * falling back to hardcoded defaults for local development.
+ *
+ * Environment variables:
+ *  - INSFORGE_BASE_URL
+ *  - INSFORGE_ANON_KEY
+ *  - INSFORGE_TEST_JWT_TOKEN
  */
 object TestConfig {
-    const val BASE_URL = "https://pg6afqz9.us-east.insforge.app"
-    const val ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3OC0xMjM0LTU2NzgtOTBhYi1jZGVmMTIzNDU2NzgiLCJlbWFpbCI6ImFub25AaW5zZm9yZ2UuY29tIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Njc5MDc5MzJ9.K0semVtcacV55qeEhVUI3WKWzT7p87JU7wNzdXysRWo"
-    //const val BASE_URL = "http://localhost:7130"
-    //const val ANON_KEY = "ik_0322f7447cd878f2e419dc8900fe3e5e"
+    val BASE_URL: String = System.getenv("INSFORGE_BASE_URL")
+        ?: "https://pg6afqz9.us-east.insforge.app"
+
+    val ANON_KEY: String = System.getenv("INSFORGE_ANON_KEY")
+        ?: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3OC0xMjM0LTU2NzgtOTBhYi1jZGVmMTIzNDU2NzgiLCJlbWFpbCI6ImFub25AaW5zZm9yZ2UuY29tIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Njc5MDc5MzJ9.K0semVtcacV55qeEhVUI3WKWzT7p87JU7wNzdXysRWo"
 
     /**
      * Create a fully configured test client with all plugins installed
@@ -112,8 +121,8 @@ object TestConfig {
         }
     }
 
-    // JWT token for authenticated user testing
-    const val TEST_JWT_TOKEN = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIwODVhNDgxZS05NGI4LTRiZjktYjNhMC03ZjBlNTBmN2EwNzIiLCJlbWFpbCI6Imp1bndlbi5mZW5nQGluc2ZvcmdlLmRldiIsInJvbGUiOiJhdXRoZW50aWNhdGVkIiwiaWF0IjoxNzY3NzQyMTE2LCJleHAiOjE3NjgzNDY5MTZ9.jhfprod2CU1Bn2j92wG9_j0MdmbtycpRI0SHoqqDtcc"
+    val TEST_JWT_TOKEN: String = System.getenv("INSFORGE_TEST_JWT_TOKEN")
+        ?: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIwODVhNDgxZS05NGI4LTRiZjktYjNhMC03ZjBlNTBmN2EwNzIiLCJlbWFpbCI6Imp1bndlbi5mZW5nQGluc2ZvcmdlLmRldiIsInJvbGUiOiJhdXRoZW50aWNhdGVkIiwiaWF0IjoxNzY3NzQyMTE2LCJleHAiOjE3NjgzNDY5MTZ9.jhfprod2CU1Bn2j92wG9_j0MdmbtycpRI0SHoqqDtcc"
 
     /**
      * Create a test client with JWT token for authenticated realtime testing
