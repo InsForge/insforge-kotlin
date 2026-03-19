@@ -14,6 +14,7 @@ import io.ktor.client.plugins.websocket.*
 import io.ktor.client.request.*
 import io.ktor.http.*
 import io.ktor.serialization.kotlinx.json.*
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -27,8 +28,9 @@ object InsforgeHttpClient {
     // Mutex to prevent multiple simultaneous refresh attempts
     private val refreshMutex = Mutex()
 
-    // Flag to prevent infinite refresh loops
-    private var isRefreshing = false
+    // CompletableDeferred shared across concurrent requests during an active refresh.
+    // Non-null means a refresh is in progress; all other callers await this result.
+    private var refreshDeferred: CompletableDeferred<Boolean>? = null
 
     fun create(insforgeClient: InsforgeClient): HttpClient {
         val config = insforgeClient.config
@@ -96,7 +98,7 @@ object InsforgeHttpClient {
                 val response = execute(request)
 
                 // Handle 401 Unauthorized - try to refresh token and retry
-                if (response.response.status == HttpStatusCode.Unauthorized && !isRefreshing) {
+                if (response.response.status == HttpStatusCode.Unauthorized) {
                     // Check if Auth plugin is installed and has a refresh token
                     val auth = try {
                         insforgeClient.pluginManager.getPlugin("auth") as? Auth
@@ -119,23 +121,45 @@ object InsforgeHttpClient {
                         val skipAutoRefresh = isRefreshEndpoint || isSignUpEndpoint || isSignInEndpoint
                         if (!skipAutoRefresh) {
                             try {
-                                val refreshSuccessful = refreshMutex.withLock {
-                                    if (isRefreshing) {
-                                        // Another coroutine is already refreshing
-                                        false
+                                // Mutex + CompletableDeferred pattern:
+                                // - The first coroutine to acquire the lock performs the refresh and
+                                //   stores a CompletableDeferred for others to await.
+                                // - Subsequent coroutines see the in-progress deferred, release the
+                                //   lock immediately, and suspend on the shared result — no duplicate
+                                //   refresh calls, no busy-waiting.
+                                val refreshSuccessful: Boolean
+                                val existingDeferred: CompletableDeferred<Boolean>?
+                                val ownDeferred: CompletableDeferred<Boolean>?
+
+                                refreshMutex.withLock {
+                                    existingDeferred = refreshDeferred
+                                    if (existingDeferred == null) {
+                                        // We are the first — create and register the deferred
+                                        ownDeferred = CompletableDeferred()
+                                        refreshDeferred = ownDeferred
                                     } else {
-                                        isRefreshing = true
-                                        try {
-                                            auth.refreshAccessToken()
-                                            InsforgeLogger.debug("Token refreshed successfully, retrying request", "HTTP")
-                                            true
-                                        } catch (e: Exception) {
-                                            InsforgeLogger.warn("Token refresh failed: ${e.message}", tag = "HTTP")
-                                            false
-                                        } finally {
-                                            isRefreshing = false
-                                        }
+                                        ownDeferred = null
                                     }
+                                }
+
+                                refreshSuccessful = if (ownDeferred != null) {
+                                    // Perform the actual refresh outside the mutex so others can
+                                    // read refreshDeferred without blocking on our network call.
+                                    try {
+                                        auth.refreshAccessToken()
+                                        InsforgeLogger.debug("Token refreshed successfully, retrying request", "HTTP")
+                                        ownDeferred.complete(true)
+                                        true
+                                    } catch (e: Exception) {
+                                        InsforgeLogger.warn("Token refresh failed: ${e.message}", tag = "HTTP")
+                                        ownDeferred.complete(false)
+                                        false
+                                    } finally {
+                                        refreshMutex.withLock { refreshDeferred = null }
+                                    }
+                                } else {
+                                    // Another coroutine is already refreshing — await its result
+                                    existingDeferred!!.await()
                                 }
 
                                 if (refreshSuccessful) {
