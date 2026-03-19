@@ -132,8 +132,15 @@ val integrationTest by tasks.registering(Test::class) {
     testClassesDirs = sourceSets["test"].output.classesDirs
     classpath = sourceSets["test"].runtimeClasspath
 
+    maxHeapSize = "512m"
+
     useJUnitPlatform {
         includeTags("integration")
+    }
+
+    testLogging {
+        showStandardStreams = true
+        events("passed", "skipped", "failed")
     }
 
     shouldRunAfter(tasks.named("test"))

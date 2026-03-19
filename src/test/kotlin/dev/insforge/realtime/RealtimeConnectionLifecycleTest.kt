@@ -16,7 +16,6 @@ import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.seconds
 
-@Tag("integration")
 class RealtimeConnectionLifecycleTest {
 
     @Test

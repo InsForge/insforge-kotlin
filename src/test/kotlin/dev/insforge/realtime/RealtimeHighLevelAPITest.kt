@@ -29,7 +29,7 @@ class RealtimeHighLevelAPITest {
     private lateinit var client: dev.insforge.InsforgeClient
 
     @BeforeTest
-    fun setup() {
+    fun setup() = kotlinx.coroutines.test.runTest {
         client = TestConfig.createAuthenticatedRealtimeClient()
     }
 

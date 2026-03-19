@@ -6,6 +6,7 @@ import dev.insforge.database.Database
 import dev.insforge.functions.Functions
 import dev.insforge.realtime.Realtime
 import dev.insforge.storage.Storage
+import dev.insforge.auth.auth
 import dev.insforge.logging.InsforgeLogLevel
 
 /**
@@ -17,7 +18,8 @@ import dev.insforge.logging.InsforgeLogLevel
  * Environment variables:
  *  - INSFORGE_BASE_URL
  *  - INSFORGE_ANON_KEY
- *  - INSFORGE_TEST_JWT_TOKEN
+ *  - INSFORGE_TEST_EMAIL
+ *  - INSFORGE_TEST_PASSWORD
  */
 object TestConfig {
     val BASE_URL: String = System.getenv("INSFORGE_BASE_URL")
@@ -25,6 +27,46 @@ object TestConfig {
 
     val ANON_KEY: String = System.getenv("INSFORGE_ANON_KEY")
         ?: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3OC0xMjM0LTU2NzgtOTBhYi1jZGVmMTIzNDU2NzgiLCJlbWFpbCI6ImFub25AaW5zZm9yZ2UuY29tIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Njc5MDc5MzJ9.K0semVtcacV55qeEhVUI3WKWzT7p87JU7wNzdXysRWo"
+
+    val TEST_EMAIL: String = System.getenv("INSFORGE_TEST_EMAIL")
+        ?: "ci-test@insforge.dev"
+
+    val TEST_PASSWORD: String = System.getenv("INSFORGE_TEST_PASSWORD")
+        ?: "CiTest123456!"
+
+    private var cachedAccessToken: String? = null
+    private var cachedUserId: String? = null
+
+    /**
+     * Sign in with test credentials and cache the access token and user ID.
+     * Attempts sign-up first (no-op if the user already exists).
+     */
+    private suspend fun ensureSignedIn() {
+        if (cachedAccessToken != null) return
+
+        val authClient = createAuthClient()
+        try {
+            try {
+                authClient.auth.signUp(email = TEST_EMAIL, password = TEST_PASSWORD, name = "CI Test User")
+            } catch (_: Exception) { }
+
+            val response = authClient.auth.signIn(email = TEST_EMAIL, password = TEST_PASSWORD)
+            cachedAccessToken = response.accessToken
+            cachedUserId = response.user.id
+        } finally {
+            authClient.close()
+        }
+    }
+
+    suspend fun getAccessToken(): String {
+        ensureSignedIn()
+        return cachedAccessToken!!
+    }
+
+    suspend fun getUserId(): String {
+        ensureSignedIn()
+        return cachedUserId!!
+    }
 
     /**
      * Create a fully configured test client with all plugins installed
@@ -77,8 +119,7 @@ object TestConfig {
             baseURL = BASE_URL,
             anonKey = ANON_KEY
         ) {
-            // Enable full HTTP logging for debugging
-            logLevel = InsforgeLogLevel.VERBOSE
+            logLevel = InsforgeLogLevel.INFO
             install(Storage)
         }
     }
@@ -121,41 +162,37 @@ object TestConfig {
         }
     }
 
-    val TEST_JWT_TOKEN: String = System.getenv("INSFORGE_TEST_JWT_TOKEN")
-        ?: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIwODVhNDgxZS05NGI4LTRiZjktYjNhMC03ZjBlNTBmN2EwNzIiLCJlbWFpbCI6Imp1bndlbi5mZW5nQGluc2ZvcmdlLmRldiIsInJvbGUiOiJhdXRoZW50aWNhdGVkIiwiaWF0IjoxNzY3NzQyMTE2LCJleHAiOjE3NjgzNDY5MTZ9.jhfprod2CU1Bn2j92wG9_j0MdmbtycpRI0SHoqqDtcc"
-
     /**
-     * Create a test client with JWT token for authenticated realtime testing
+     * Create a test client with a dynamically obtained JWT for authenticated realtime testing.
+     * Signs in via auth#signIn to get a fresh token instead of relying on a static JWT.
      */
-    fun createAuthenticatedRealtimeClient(): InsforgeClient {
+    suspend fun createAuthenticatedRealtimeClient(): InsforgeClient {
+        val token = getAccessToken()
         return createInsforgeClient(
             baseURL = BASE_URL,
             anonKey = ANON_KEY
         ) {
-            // Use JWT token for authentication
-            accessToken = { TEST_JWT_TOKEN }
-            // Realtime needs Database for the todos tests
+            accessToken = { token }
             install(Database)
             install(Realtime) {
-                debug = true  // Enable WebSocket message logging
+                debug = true
             }
         }
     }
 
     /**
-     * Create a test client with JWT token and debug logging enabled for realtime testing
+     * Create a test client with a dynamically obtained JWT and debug logging for realtime testing.
      */
-    fun createAuthenticatedRealtimeClientWithDebug(): InsforgeClient {
+    suspend fun createAuthenticatedRealtimeClient(debug: Boolean): InsforgeClient {
+        val token = getAccessToken()
         return createInsforgeClient(
             baseURL = BASE_URL,
             anonKey = ANON_KEY
         ) {
-            // Use JWT token for authentication
-            accessToken = { TEST_JWT_TOKEN }
-            // Realtime needs Database for the todos tests
+            accessToken = { token }
             install(Database)
             install(Realtime) {
-                debug = true  // Enable WebSocket message logging
+                this.debug = debug
             }
         }
     }

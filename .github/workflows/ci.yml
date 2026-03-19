@@ -48,4 +48,5 @@ jobs:
         env:
           INSFORGE_BASE_URL: ${{ secrets.INSFORGE_BASE_URL }}
           INSFORGE_ANON_KEY: ${{ secrets.INSFORGE_ANON_KEY }}
-          INSFORGE_TEST_JWT_TOKEN: ${{ secrets.INSFORGE_TEST_JWT_TOKEN }}
+          INSFORGE_TEST_EMAIL: ${{ secrets.INSFORGE_TEST_EMAIL }}
+          INSFORGE_TEST_PASSWORD: ${{ secrets.INSFORGE_TEST_PASSWORD }}

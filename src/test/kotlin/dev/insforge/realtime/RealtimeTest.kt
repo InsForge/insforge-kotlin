@@ -35,8 +35,7 @@ class RealtimeTest {
     private lateinit var client: dev.insforge.InsforgeClient
 
     @BeforeTest
-    fun setup() {
-        // Use authenticated client with JWT token for Socket.IO tests
+    fun setup() = kotlinx.coroutines.test.runTest {
         client = TestConfig.createAuthenticatedRealtimeClient()
     }
 
@@ -160,6 +159,7 @@ class RealtimeTest {
 
     @Test
     fun `test channel status transitions`() = runTest {
+        var subscribeJob: kotlinx.coroutines.Job? = null
         try {
             client.realtime.connect()
             delay(500)
@@ -170,7 +170,7 @@ class RealtimeTest {
             assertEquals(InsforgeChannel.Status.UNSUBSCRIBED, channel.status.value)
 
             // Subscribe (non-blocking)
-            launch {
+            subscribeJob = launch {
                 channel.subscribe(blockUntilSubscribed = false)
             }
 
@@ -191,6 +191,8 @@ class RealtimeTest {
             client.realtime.disconnect()
         } catch (e: Exception) {
             println("Channel status test failed: ${e.message}")
+        } finally {
+            subscribeJob?.cancel()
         }
     }
 
@@ -1448,6 +1450,7 @@ class RealtimeTest {
 
     @Test
     fun `test complete channel workflow`() = runTest {
+        var collectJob: kotlinx.coroutines.Job? = null
         try {
             // 1. Connect to realtime
             client.realtime.connect()
@@ -1466,7 +1469,7 @@ class RealtimeTest {
             val broadcastFlow = channel.broadcastFlow("test-event")
 
             // 4. Collect broadcast messages in background
-            val collectJob = launch {
+            collectJob = launch {
                 broadcastFlow.take(2).collect { msg ->
                     broadcastMessages.add(msg)
                     println("Collected broadcast: $msg")
@@ -1491,6 +1494,7 @@ class RealtimeTest {
             // 7. Wait for collection
             delay(1000)
             collectJob.cancel()
+            collectJob = null
 
             println("Collected ${broadcastMessages.size} messages")
 
@@ -1502,6 +1506,8 @@ class RealtimeTest {
             println("Complete integration test passed!")
         } catch (e: Exception) {
             println("Integration test: ${e.message}")
+        } finally {
+            collectJob?.cancel()
         }
     }
 }

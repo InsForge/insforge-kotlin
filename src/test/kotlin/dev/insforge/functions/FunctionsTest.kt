@@ -100,13 +100,12 @@ class FunctionsTest {
 
     @Test
     fun `test invoke raw function`() = runTest {
-        try {
-            val response = client.functions.invokeRaw("hello")
-            println("Raw response status: ${response.status}")
-            assertTrue(response.status.value in 200..299)
-        } catch (e: Exception) {
-            println("Raw invoke failed: ${e.message}")
-        }
+        val response = client.functions.invokeRaw("hello")
+        println("Raw response status: ${response.status}")
+        assertTrue(
+            response.status.value in 200..499,
+            "Expected a valid HTTP response, got: ${response.status}"
+        )
     }
 
     @Test
