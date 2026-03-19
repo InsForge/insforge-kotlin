@@ -31,19 +31,33 @@ jobs:
     needs: unit-tests
 
     steps:
+      - name: Check for required secrets
+        id: check-secrets
+        run: |
+          if [ -z "${{ secrets.INSFORGE_BASE_URL }}" ]; then
+            echo "available=false" >> "$GITHUB_OUTPUT"
+            echo "Secrets not available — skipping integration tests (fork PR)"
+          else
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Checkout repository
+        if: steps.check-secrets.outputs.available == 'true'
         uses: actions/checkout@v4
 
       - name: Set up JDK 17
+        if: steps.check-secrets.outputs.available == 'true'
         uses: actions/setup-java@v4
         with:
           java-version: '17'
           distribution: 'temurin'
 
       - name: Setup Gradle
+        if: steps.check-secrets.outputs.available == 'true'
         uses: gradle/actions/setup-gradle@v3
 
       - name: Run integration tests
+        if: steps.check-secrets.outputs.available == 'true'
         run: ./gradlew integrationTest
         env:
           INSFORGE_BASE_URL: ${{ secrets.INSFORGE_BASE_URL }}
