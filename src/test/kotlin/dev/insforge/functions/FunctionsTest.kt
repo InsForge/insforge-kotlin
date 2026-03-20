@@ -4,11 +4,13 @@ import dev.insforge.TestConfig
 import dev.insforge.exceptions.InsforgeHttpException
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.Serializable
+import org.junit.jupiter.api.Tag
 import kotlin.test.*
 
 /**
  * Integration tests for Functions module
  */
+@Tag("integration")
 class FunctionsTest {
 
     private lateinit var client: dev.insforge.InsforgeClient
@@ -98,13 +100,12 @@ class FunctionsTest {
 
     @Test
     fun `test invoke raw function`() = runTest {
-        try {
-            val response = client.functions.invokeRaw("hello")
-            println("Raw response status: ${response.status}")
-            assertTrue(response.status.value in 200..299)
-        } catch (e: Exception) {
-            println("Raw invoke failed: ${e.message}")
-        }
+        val response = client.functions.invokeRaw("hello")
+        println("Raw response status: ${response.status}")
+        assertTrue(
+            response.status.value in 200..499,
+            "Expected a valid HTTP response, got: ${response.status}"
+        )
     }
 
     @Test

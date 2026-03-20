@@ -11,6 +11,7 @@ import kotlinx.serialization.json.addJsonObject
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
+import org.junit.jupiter.api.Tag
 import kotlin.test.*
 import kotlin.time.Duration.Companion.seconds
 
@@ -26,15 +27,15 @@ import kotlin.time.Duration.Companion.seconds
  * Monitors database changes on the todos table using database triggers
  * that publish to the 'todos' channel.
  */
+@Tag("integration")
 class RealtimeLowLevelAPITest {
 
     private lateinit var client: dev.insforge.InsforgeClient
-
-    // User ID from the JWT token for RLS compliance
-    private val testUserId = "085a481e-94b8-4bf9-b3a0-7f0e50f7a072"
+    private lateinit var testUserId: String
 
     @BeforeTest
-    fun setup() {
+    fun setup() = kotlinx.coroutines.test.runTest {
+        testUserId = TestConfig.getUserId()
         client = TestConfig.createAuthenticatedRealtimeClient()
     }
 
@@ -664,7 +665,7 @@ class RealtimeLowLevelAPITest {
     @Test
     fun `test debug logging for websocket messages`() = runTest(timeout = 30.seconds) {
         // Create a client with debug logging enabled
-        val debugClient = TestConfig.createAuthenticatedRealtimeClientWithDebug()
+        val debugClient = TestConfig.createAuthenticatedRealtimeClient(debug = true)
 
         println("\n[Test] === Testing Debug Logging ===")
         println("[Test] The following debug logs should appear:\n")

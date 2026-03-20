@@ -7,12 +7,14 @@ import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.*
+import org.junit.jupiter.api.Tag
 import kotlin.test.*
 import kotlin.time.Duration.Companion.seconds
 
 /**
  * Integration tests for AI module
  */
+@Tag("integration")
 class AITest {
 
     private lateinit var client: dev.insforge.InsforgeClient

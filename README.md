@@ -152,8 +152,11 @@ src/main/kotlin/dev/insforge/
 # Build
 ./gradlew clean build
 
-# Run tests
+# Run unit tests (CI-safe, no external service dependency)
 ./gradlew test
+
+# Run integration tests (requires InsForge test backend)
+./gradlew integrationTest
 
 # Publish to local Maven
 ./gradlew publishToMavenLocal

@@ -5,11 +5,13 @@ import dev.insforge.exceptions.InsforgeHttpException
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.*
+import org.junit.jupiter.api.Tag
 import kotlin.test.*
 
 /**
  * Integration tests for Database module
  */
+@Tag("integration")
 class DatabaseTest {
 
     private lateinit var client: dev.insforge.InsforgeClient

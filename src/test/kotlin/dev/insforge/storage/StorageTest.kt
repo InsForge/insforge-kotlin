@@ -4,6 +4,7 @@ import dev.insforge.TestConfig
 import dev.insforge.exceptions.InsforgeHttpException
 import dev.insforge.storage.models.UploadMethod
 import kotlinx.coroutines.test.runTest
+import org.junit.jupiter.api.Tag
 import kotlin.test.*
 import kotlin.time.Duration.Companion.seconds
 
@@ -16,6 +17,7 @@ import kotlin.time.Duration.Companion.seconds
  * - Upload strategies (direct and presigned)
  * - Download strategies
  */
+@Tag("integration")
 class StorageTest {
 
     private lateinit var client: dev.insforge.InsforgeClient
