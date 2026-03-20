@@ -680,4 +680,173 @@ class DatabaseTest {
             println("Upsert typed failed: ${e.message}")
         }
     }
+
+    // ============ OR Combined Filtering Tests ============
+
+    @Test
+    fun `test OR combined filtering`() = runTest {
+        try {
+            val results = client.database.from("todos")
+                .select()
+                .or("is_completed.eq.true,title.like.%test%")
+                .execute<TodoRecord>()
+            println("OR filter returned ${results.size} records")
+        } catch (e: InsforgeHttpException) {
+            println("OR filter failed: ${e.message}")
+        }
+    }
+
+    // ============ NOT Negation Tests ============
+
+    @Test
+    fun `test NOT negation filter`() = runTest {
+        try {
+            val results = client.database.from("todos")
+                .select()
+                .not("is_completed", "eq", true)
+                .execute<TodoRecord>()
+            println("NOT filter returned ${results.size} records")
+            results.forEach { record ->
+                assertTrue(record.is_completed != true, "NOT filter should exclude completed todos")
+            }
+        } catch (e: InsforgeHttpException) {
+            println("NOT filter failed: ${e.message}")
+        }
+    }
+
+    // ============ Contains / ContainedBy Tests ============
+
+    @Test
+    fun `test contains filter`() = runTest {
+        try {
+            val results = client.database.from("users")
+                .select()
+                .contains("nickname", "{test}")
+                .execute<UserRecord>()
+            println("Contains filter returned ${results.size} records")
+        } catch (e: InsforgeHttpException) {
+            println("Contains filter failed: ${e.message}")
+        }
+    }
+
+    @Test
+    fun `test containedBy filter`() = runTest {
+        try {
+            val results = client.database.from("users")
+                .select()
+                .containedBy("nickname", "{test,admin,user}")
+                .execute<UserRecord>()
+            println("ContainedBy filter returned ${results.size} records")
+        } catch (e: InsforgeHttpException) {
+            println("ContainedBy filter failed: ${e.message}")
+        }
+    }
+
+    // ============ Full-Text Search Tests ============
+
+    @Test
+    fun `test textSearch with plain type`() = runTest {
+        try {
+            val results = client.database.from("todos")
+                .select()
+                .textSearch("title", "test")
+                .execute<TodoRecord>()
+            println("Text search (PLAIN) returned ${results.size} records")
+        } catch (e: InsforgeHttpException) {
+            println("Text search (PLAIN) failed: ${e.message}")
+        }
+    }
+
+    @Test
+    fun `test textSearch with config`() = runTest {
+        try {
+            val results = client.database.from("todos")
+                .select()
+                .textSearch("title", "test", TextSearchType.WEBSEARCH, "english")
+                .execute<TodoRecord>()
+            println("Text search (WEBSEARCH, english) returned ${results.size} records")
+        } catch (e: InsforgeHttpException) {
+            println("Text search (WEBSEARCH, english) failed: ${e.message}")
+        }
+    }
+
+    @Test
+    fun `test textSearch with full tsquery syntax`() = runTest {
+        try {
+            val results = client.database.from("todos")
+                .select()
+                .textSearch("title", "'hello' & 'world'", TextSearchType.FULL)
+                .execute<TodoRecord>()
+            println("Text search (FULL) returned ${results.size} records")
+        } catch (e: InsforgeHttpException) {
+            println("Text search (FULL) failed: ${e.message}")
+        }
+    }
+
+    // ============ Range Operator Tests ============
+
+    @Test
+    fun `test overlaps filter`() = runTest {
+        try {
+            val results = client.database.from("todos")
+                .select()
+                .overlaps("title", "{test}")
+                .execute<TodoRecord>()
+            println("Overlaps filter returned ${results.size} records")
+        } catch (e: InsforgeHttpException) {
+            println("Overlaps filter failed: ${e.message}")
+        }
+    }
+
+    @Test
+    fun `test adjacent filter`() = runTest {
+        try {
+            val results = client.database.from("todos")
+                .select()
+                .adjacent("created_at", "(2024-01-01,2024-12-31)")
+                .execute<TodoRecord>()
+            println("Adjacent filter returned ${results.size} records")
+        } catch (e: InsforgeHttpException) {
+            println("Adjacent filter failed: ${e.message}")
+        }
+    }
+
+    // ============ Generic Filter Tests ============
+
+    @Test
+    fun `test generic filter method`() = runTest {
+        try {
+            val results = client.database.from("todos")
+                .select()
+                .filter("is_completed", "eq", false)
+                .execute<TodoRecord>()
+            println("Generic filter returned ${results.size} records")
+        } catch (e: InsforgeHttpException) {
+            println("Generic filter failed: ${e.message}")
+        }
+    }
+
+    // ============ Independent Count Tests ============
+
+    @Test
+    fun `test independent count method`() = runTest {
+        try {
+            val count = client.database.count("todos")
+            println("Independent count: $count")
+            assertTrue(count >= 0, "Count should be non-negative")
+        } catch (e: InsforgeHttpException) {
+            println("Independent count failed: ${e.message}")
+        }
+    }
+
+    @Test
+    fun `test independent count with estimated type`() = runTest {
+        try {
+            val count = client.database.count("todos", CountType.ESTIMATED)
+            println("Estimated count: $count")
+            assertTrue(count >= 0, "Estimated count should be non-negative")
+        } catch (e: InsforgeHttpException) {
+            println("Estimated count failed: ${e.message}")
+        }
+    }
 }

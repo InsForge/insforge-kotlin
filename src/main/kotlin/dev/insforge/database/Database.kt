@@ -53,6 +53,27 @@ class Database internal constructor(
         return TableQuery(client, baseUrl, tableName)
     }
 
+    // ============ Count ============
+
+    /**
+     * Count records in a table.
+     *
+     * Convenience method that avoids the need for `.from(table).select().count()`.
+     *
+     * Example:
+     * ```kotlin
+     * val total = client.database.count("users")
+     * val estimated = client.database.count("users", CountType.ESTIMATED)
+     * ```
+     *
+     * @param table Name of the table
+     * @param countType The count algorithm to use (default: EXACT)
+     * @return The count of records
+     */
+    suspend fun count(table: String, countType: CountType = CountType.EXACT): Long {
+        return from(table).count(countType)
+    }
+
     // ============ RPC (Remote Procedure Call) ============
 
     /**
