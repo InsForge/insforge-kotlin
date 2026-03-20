@@ -47,12 +47,19 @@ interface InsforgeChannel {
     val status: StateFlow<Status>
 
     /**
-     * Channel subscription status
+     * Represents the current subscription state of the channel.
      */
     enum class Status {
+        /** The channel is not subscribed to the server. */
         UNSUBSCRIBED,
+
+        /** The channel is in the process of subscribing. */
         SUBSCRIBING,
+
+        /** The channel is actively subscribed and receiving messages. */
         SUBSCRIBED,
+
+        /** The channel is in the process of unsubscribing. */
         UNSUBSCRIBING
     }
 
@@ -170,6 +177,7 @@ annotation class ChannelDsl
 
 @ChannelDsl
 class InsforgeChannelBuilder internal constructor(
+    /** The topic name this channel will be bound to. */
     val topic: String
 ) {
     internal var broadcastConfig = BroadcastConfig()
