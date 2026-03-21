@@ -879,6 +879,12 @@ class DatabaseTest {
     }
 
     @Test
+    fun `test not with in operator and collection formats correctly`() {
+        val query = client.database.from("table").select().not("id", "in", listOf(1, 2, 3))
+        assertEquals("not.in.(1,2,3)", query.filters["id"])
+    }
+
+    @Test
     fun `test textSearch builds correct filter string without config`() {
         val query = client.database.from("table").select().textSearch("col", "hello", TextSearchType.PLAIN)
         assertEquals("plfts.hello", query.filters["col"])

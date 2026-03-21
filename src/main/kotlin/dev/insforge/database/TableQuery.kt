@@ -175,13 +175,15 @@ class TableQuery @PublishedApi internal constructor(
      * Negate a filter using the PostgREST NOT operator.
      *
      * Example: `.not("status", "eq", "archived")` sends `?status=not.eq.archived`
+     * Example: `.not("id", "in", listOf(1, 2))` sends `?id=not.in.(1,2)`
      *
      * @param column Column name
      * @param operator PostgREST operator (e.g. "eq", "like", "in")
-     * @param value Filter value
+     * @param value Filter value (collections are formatted as PostgREST lists)
      */
     fun not(column: String, operator: String, value: Any): TableQuery {
-        filters[column] = "not.$operator.$value"
+        val formatted = if (value is Collection<*>) "(${value.joinToString(",")})" else "$value"
+        filters[column] = "not.$operator.$formatted"
         return this
     }
 
@@ -781,7 +783,8 @@ class UpdateQuery @PublishedApi internal constructor(
 
     /** Negate a filter. See [TableQuery.not]. */
     fun not(column: String, operator: String, value: Any): UpdateQuery {
-        filters[column] = "not.$operator.$value"
+        val formatted = if (value is Collection<*>) "(${value.joinToString(",")})" else "$value"
+        filters[column] = "not.$operator.$formatted"
         return this
     }
 
@@ -974,7 +977,8 @@ class DeleteQuery @PublishedApi internal constructor(
 
     /** Negate a filter. See [TableQuery.not]. */
     fun not(column: String, operator: String, value: Any): DeleteQuery {
-        filters[column] = "not.$operator.$value"
+        val formatted = if (value is Collection<*>) "(${value.joinToString(",")})" else "$value"
+        filters[column] = "not.$operator.$formatted"
         return this
     }
 
