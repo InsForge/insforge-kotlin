@@ -176,13 +176,18 @@ class TableQuery @PublishedApi internal constructor(
      *
      * Example: `.not("status", "eq", "archived")` sends `?status=not.eq.archived`
      * Example: `.not("id", "in", listOf(1, 2))` sends `?id=not.in.(1,2)`
+     * Example: `.not("deleted_at", "is", null)` sends `?deleted_at=not.is.null`
      *
      * @param column Column name
-     * @param operator PostgREST operator (e.g. "eq", "like", "in")
-     * @param value Filter value (collections are formatted as PostgREST lists)
+     * @param operator PostgREST operator (e.g. "eq", "like", "in", "is")
+     * @param value Filter value (null becomes "null", collections formatted as PostgREST lists)
      */
-    fun not(column: String, operator: String, value: Any): TableQuery {
-        val formatted = if (value is Collection<*>) "(${value.joinToString(",")})" else "$value"
+    fun not(column: String, operator: String, value: Any?): TableQuery {
+        val formatted = when {
+            value == null -> "null"
+            value is Collection<*> -> "(${value.joinToString(",")})"
+            else -> "$value"
+        }
         filters[column] = "not.$operator.$formatted"
         return this
     }
@@ -782,8 +787,12 @@ class UpdateQuery @PublishedApi internal constructor(
     }
 
     /** Negate a filter. See [TableQuery.not]. */
-    fun not(column: String, operator: String, value: Any): UpdateQuery {
-        val formatted = if (value is Collection<*>) "(${value.joinToString(",")})" else "$value"
+    fun not(column: String, operator: String, value: Any?): UpdateQuery {
+        val formatted = when {
+            value == null -> "null"
+            value is Collection<*> -> "(${value.joinToString(",")})"
+            else -> "$value"
+        }
         filters[column] = "not.$operator.$formatted"
         return this
     }
@@ -976,8 +985,12 @@ class DeleteQuery @PublishedApi internal constructor(
     }
 
     /** Negate a filter. See [TableQuery.not]. */
-    fun not(column: String, operator: String, value: Any): DeleteQuery {
-        val formatted = if (value is Collection<*>) "(${value.joinToString(",")})" else "$value"
+    fun not(column: String, operator: String, value: Any?): DeleteQuery {
+        val formatted = when {
+            value == null -> "null"
+            value is Collection<*> -> "(${value.joinToString(",")})"
+            else -> "$value"
+        }
         filters[column] = "not.$operator.$formatted"
         return this
     }

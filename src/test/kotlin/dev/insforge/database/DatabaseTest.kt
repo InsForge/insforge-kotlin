@@ -885,6 +885,12 @@ class DatabaseTest {
     }
 
     @Test
+    fun `test not with null value produces not is null`() {
+        val query = client.database.from("table").select().not("deleted_at", "is", null)
+        assertEquals("not.is.null", query.filters["deleted_at"])
+    }
+
+    @Test
     fun `test textSearch builds correct filter string without config`() {
         val query = client.database.from("table").select().textSearch("col", "hello", TextSearchType.PLAIN)
         assertEquals("plfts.hello", query.filters["col"])
