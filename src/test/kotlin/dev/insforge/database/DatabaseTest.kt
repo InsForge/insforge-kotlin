@@ -680,4 +680,237 @@ class DatabaseTest {
             println("Upsert typed failed: ${e.message}")
         }
     }
+
+    // ============ OR Combined Filtering Tests ============
+
+    @Test
+    fun `test OR filter returns matching records`() = runTest {
+        val timestamp = System.currentTimeMillis()
+        val records = buildJsonArray {
+            addJsonObject { put("title", "OrTestA-$timestamp"); put("is_completed", true) }
+            addJsonObject { put("title", "OrTestB-$timestamp"); put("is_completed", false) }
+            addJsonObject { put("title", "OrTestC-$timestamp"); put("is_completed", false) }
+        }
+        val inserted = client.database.from("todos")
+            .insert(records).returning().execute<TodoRecord>()
+
+        val results = client.database.from("todos")
+            .select()
+            .or("title.eq.OrTestA-$timestamp,title.eq.OrTestB-$timestamp")
+            .execute<TodoRecord>()
+
+        assertEquals(2, results.size, "OR filter should return exactly 2 matching records")
+
+        inserted.forEach { it.id?.let { id -> client.database.from("todos").eq("id", id).delete().execute<TodoRecord>() } }
+    }
+
+    // ============ NOT Negation Tests ============
+
+    @Test
+    fun `test NOT filter excludes matching records`() = runTest {
+        val timestamp = System.currentTimeMillis()
+        val records = buildJsonArray {
+            addJsonObject { put("title", "NotTest-$timestamp"); put("is_completed", true) }
+            addJsonObject { put("title", "NotTest-$timestamp"); put("is_completed", false) }
+        }
+        val inserted = client.database.from("todos")
+            .insert(records).returning().execute<TodoRecord>()
+
+        val results = client.database.from("todos")
+            .select()
+            .like("title", "NotTest-$timestamp%")
+            .not("is_completed", "eq", true)
+            .execute<TodoRecord>()
+
+        assertEquals(1, results.size, "NOT filter should return only the non-completed record")
+        assertEquals(false, results[0].is_completed)
+
+        inserted.forEach { it.id?.let { id -> client.database.from("todos").eq("id", id).delete().execute<TodoRecord>() } }
+    }
+
+    // ============ Full-Text Search Tests ============
+
+    @Test
+    fun `test textSearch returns matching records`() = runTest {
+        val timestamp = System.currentTimeMillis()
+        val records = buildJsonArray {
+            addJsonObject { put("title", "Searchable kotlin tutorial $timestamp"); put("is_completed", false) }
+            addJsonObject { put("title", "Unrelated record $timestamp"); put("is_completed", false) }
+        }
+        val inserted = client.database.from("todos")
+            .insert(records).returning().execute<TodoRecord>()
+
+        val results = client.database.from("todos")
+            .select()
+            .textSearch("title", "kotlin", TextSearchType.PLAIN)
+            .execute<TodoRecord>()
+
+        assertTrue(results.isNotEmpty(), "Text search should find at least one record matching 'kotlin'")
+        assertTrue(results.any { it.title?.contains("kotlin") == true }, "Results should contain 'kotlin' in title")
+
+        inserted.forEach { it.id?.let { id -> client.database.from("todos").eq("id", id).delete().execute<TodoRecord>() } }
+    }
+
+    @Test
+    fun `test textSearch with config builds correct query`() = runTest {
+        val timestamp = System.currentTimeMillis()
+        val records = buildJsonArray {
+            addJsonObject { put("title", "Beautiful garden flowers $timestamp"); put("is_completed", false) }
+        }
+        val inserted = client.database.from("todos")
+            .insert(records).returning().execute<TodoRecord>()
+
+        val results = client.database.from("todos")
+            .select()
+            .textSearch("title", "garden", TextSearchType.WEBSEARCH, "english")
+            .execute<TodoRecord>()
+
+        assertTrue(results.isNotEmpty(), "Websearch with english config should find matching records")
+
+        inserted.forEach { it.id?.let { id -> client.database.from("todos").eq("id", id).delete().execute<TodoRecord>() } }
+    }
+
+    // ============ Generic Filter Tests ============
+
+    @Test
+    fun `test generic filter matches eq behavior`() = runTest {
+        val timestamp = System.currentTimeMillis()
+        val records = buildJsonArray {
+            addJsonObject { put("title", "FilterTest-$timestamp"); put("is_completed", false) }
+        }
+        val inserted = client.database.from("todos")
+            .insert(records).returning().execute<TodoRecord>()
+
+        val viaFilter = client.database.from("todos")
+            .select()
+            .filter("title", "eq", "FilterTest-$timestamp")
+            .execute<TodoRecord>()
+
+        val viaEq = client.database.from("todos")
+            .select()
+            .eq("title", "FilterTest-$timestamp")
+            .execute<TodoRecord>()
+
+        assertEquals(viaEq.size, viaFilter.size, "Generic filter(eq) should return same results as eq()")
+        assertEquals(1, viaFilter.size)
+
+        inserted.forEach { it.id?.let { id -> client.database.from("todos").eq("id", id).delete().execute<TodoRecord>() } }
+    }
+
+    // ============ Independent Count Tests ============
+
+    @Test
+    fun `test independent count matches from count`() = runTest {
+        val directCount = client.database.count("todos")
+        val chainedCount = client.database.from("todos").count()
+
+        assertEquals(chainedCount, directCount, "Independent count should match chained count")
+        assertTrue(directCount >= 0, "Count should be non-negative")
+    }
+
+    @Test
+    fun `test independent count with estimated type`() = runTest {
+        val count = client.database.count("todos", CountType.ESTIMATED)
+        assertTrue(count >= 0, "Estimated count should be non-negative")
+    }
+
+    // ============ Query Construction Tests ============
+    // Operators like contains/containedBy/overlaps/adjacent require array/JSON/range
+    // columns. We verify correct PostgREST filter string construction instead.
+
+    @Test
+    fun `test contains builds correct filter string`() {
+        val query = client.database.from("table").select().contains("tags", "{a,b}")
+        assertEquals("cs.{a,b}", query.filters["tags"])
+    }
+
+    @Test
+    fun `test containedBy builds correct filter string`() {
+        val query = client.database.from("table").select().containedBy("tags", "{a,b,c}")
+        assertEquals("cd.{a,b,c}", query.filters["tags"])
+    }
+
+    @Test
+    fun `test overlaps builds correct filter string`() {
+        val query = client.database.from("table").select().overlaps("schedule", "[2024-01-01,2024-12-31]")
+        assertEquals("ov.[2024-01-01,2024-12-31]", query.filters["schedule"])
+    }
+
+    @Test
+    fun `test adjacent builds correct filter string`() {
+        val query = client.database.from("table").select().adjacent("range_col", "(1,10)")
+        assertEquals("adj.(1,10)", query.filters["range_col"])
+    }
+
+    @Test
+    fun `test rangeLt builds correct filter string`() {
+        val query = client.database.from("table").select().rangeLt("range_col", "(1,10)")
+        assertEquals("sl.(1,10)", query.filters["range_col"])
+    }
+
+    @Test
+    fun `test rangeGt builds correct filter string`() {
+        val query = client.database.from("table").select().rangeGt("range_col", "(1,10)")
+        assertEquals("sr.(1,10)", query.filters["range_col"])
+    }
+
+    @Test
+    fun `test rangeLte builds correct filter string`() {
+        val query = client.database.from("table").select().rangeLte("range_col", "(1,10)")
+        assertEquals("nxr.(1,10)", query.filters["range_col"])
+    }
+
+    @Test
+    fun `test rangeGte builds correct filter string`() {
+        val query = client.database.from("table").select().rangeGte("range_col", "(1,10)")
+        assertEquals("nxl.(1,10)", query.filters["range_col"])
+    }
+
+    @Test
+    fun `test or builds correct filter string`() {
+        val query = client.database.from("table").select().or("age.gt.18,status.eq.active")
+        assertEquals("(age.gt.18,status.eq.active)", query.filters["or"])
+    }
+
+    @Test
+    fun `test not builds correct filter string`() {
+        val query = client.database.from("table").select().not("status", "eq", "archived")
+        assertEquals("not.eq.archived", query.filters["status"])
+    }
+
+    @Test
+    fun `test not with in operator and collection formats correctly`() {
+        val query = client.database.from("table").select().not("id", "in", listOf(1, 2, 3))
+        assertEquals("not.in.(1,2,3)", query.filters["id"])
+    }
+
+    @Test
+    fun `test not with null value produces not is null`() {
+        val query = client.database.from("table").select().not("deleted_at", "is", null)
+        assertEquals("not.is.null", query.filters["deleted_at"])
+    }
+
+    @Test
+    fun `test textSearch builds correct filter string without config`() {
+        val query = client.database.from("table").select().textSearch("col", "hello", TextSearchType.PLAIN)
+        assertEquals("plfts.hello", query.filters["col"])
+    }
+
+    @Test
+    fun `test textSearch builds correct filter string with config`() {
+        val query = client.database.from("table").select().textSearch("col", "hello", TextSearchType.WEBSEARCH, "english")
+        assertEquals("wfts(english).hello", query.filters["col"])
+    }
+
+    @Test
+    fun `test textSearch FULL type maps to fts`() {
+        val query = client.database.from("table").select().textSearch("col", "'a' & 'b'", TextSearchType.FULL)
+        assertEquals("fts.'a' & 'b'", query.filters["col"])
+    }
+
+    @Test
+    fun `test generic filter builds correct filter string`() {
+        val query = client.database.from("table").select().filter("id", "in", "(1,2,3)")
+        assertEquals("in.(1,2,3)", query.filters["id"])
+    }
 }

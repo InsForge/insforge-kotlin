@@ -9,6 +9,22 @@ import kotlinx.serialization.json.*
 import kotlinx.serialization.serializer
 
 /**
+ * Full-text search types supported by PostgREST.
+ *
+ * Each type maps to a different PostgreSQL text search function:
+ * - [PLAIN] uses `plainto_tsquery` — converts plain text to a tsquery
+ * - [PHRASE] uses `phraseto_tsquery` — matches exact phrases
+ * - [WEBSEARCH] uses `websearch_to_tsquery` — supports Google-like search syntax
+ * - [FULL] uses `to_tsquery` — expects raw tsquery syntax (e.g. `'fat' & 'cat'`)
+ */
+enum class TextSearchType(val value: String) {
+    PLAIN("plfts"),
+    PHRASE("phfts"),
+    WEBSEARCH("wfts"),
+    FULL("fts")
+}
+
+/**
  * Count algorithm types for database queries.
  *
  * Similar to PostgREST/Supabase count options.
@@ -138,6 +154,186 @@ class TableQuery @PublishedApi internal constructor(
      */
     fun isNull(column: String): TableQuery {
         filters[column] = "is.null"
+        return this
+    }
+
+    // ============ Logical Operators ============
+
+    /**
+     * OR combined filter using PostgREST syntax.
+     *
+     * Example: `.or("age.lt.18,age.gt.65")` sends `?or=(age.lt.18,age.gt.65)`
+     *
+     * @param filters Comma-separated PostgREST filter expressions
+     */
+    fun or(filters: String): TableQuery {
+        this.filters["or"] = "($filters)"
+        return this
+    }
+
+    /**
+     * Negate a filter using the PostgREST NOT operator.
+     *
+     * Example: `.not("status", "eq", "archived")` sends `?status=not.eq.archived`
+     * Example: `.not("id", "in", listOf(1, 2))` sends `?id=not.in.(1,2)`
+     * Example: `.not("deleted_at", "is", null)` sends `?deleted_at=not.is.null`
+     *
+     * @param column Column name
+     * @param operator PostgREST operator (e.g. "eq", "like", "in", "is")
+     * @param value Filter value (null becomes "null", collections formatted as PostgREST lists)
+     */
+    fun not(column: String, operator: String, value: Any?): TableQuery {
+        val formatted = when {
+            value == null -> "null"
+            value is Collection<*> -> "(${value.joinToString(",")})"
+            else -> "$value"
+        }
+        filters[column] = "not.$operator.$formatted"
+        return this
+    }
+
+    // ============ Array / JSON Operators ============
+
+    /**
+     * Contains filter (PostgREST `cs` operator, PostgreSQL `@>`).
+     *
+     * For arrays: `.contains("tags", "{kotlin,android}")` sends `?tags=cs.{kotlin,android}`
+     * For JSON: `.contains("metadata", """{"key":"val"}""")` sends `?metadata=cs.{"key":"val"}`
+     *
+     * @param column Column name (array or JSON type)
+     * @param value Value to check containment against
+     */
+    fun contains(column: String, value: Any): TableQuery {
+        filters[column] = "cs.$value"
+        return this
+    }
+
+    /**
+     * Contained-by filter (PostgREST `cd` operator, PostgreSQL `<@`).
+     *
+     * Example: `.containedBy("tags", "{kotlin,android,java}")` sends `?tags=cd.{kotlin,android,java}`
+     *
+     * @param column Column name (array or JSON type)
+     * @param value Value to check containment against
+     */
+    fun containedBy(column: String, value: Any): TableQuery {
+        filters[column] = "cd.$value"
+        return this
+    }
+
+    // ============ Full-Text Search ============
+
+    /**
+     * Full-text search filter.
+     *
+     * Example: `.textSearch("content", "kotlin api")` sends `?content=plfts.kotlin api`
+     * Example: `.textSearch("content", "'fat' & 'cat'", TextSearchType.FULL, "english")`
+     *         sends `?content=fts(english).'fat' & 'cat'`
+     *
+     * @param column Column name (text or tsvector type)
+     * @param query Search query
+     * @param type Type of text search function to use (default: PLAIN)
+     * @param config Optional PostgreSQL text search configuration (e.g. "english", "french")
+     */
+    fun textSearch(
+        column: String,
+        query: String,
+        type: TextSearchType = TextSearchType.PLAIN,
+        config: String? = null
+    ): TableQuery {
+        val configStr = config?.let { "($it)" } ?: ""
+        filters[column] = "${type.value}${configStr}.$query"
+        return this
+    }
+
+    // ============ Range Operators ============
+
+    /**
+     * Range overlap filter (PostgREST `ov` operator, PostgreSQL `&&`).
+     *
+     * Example: `.overlaps("schedule", "[2024-01-01,2024-12-31]")` sends `?schedule=ov.[2024-01-01,2024-12-31]`
+     * For arrays: `.overlaps("tags", "{a,b}")` sends `?tags=ov.{a,b}`
+     *
+     * @param column Column name (range or array type)
+     * @param value Range or array literal
+     */
+    fun overlaps(column: String, value: String): TableQuery {
+        filters[column] = "ov.$value"
+        return this
+    }
+
+    /**
+     * Range adjacent filter (PostgREST `adj` operator, PostgreSQL `-|-`).
+     *
+     * Example: `.adjacent("range_col", "(1,10)")` sends `?range_col=adj.(1,10)`
+     *
+     * @param column Column name (range type)
+     * @param value Range literal
+     */
+    fun adjacent(column: String, value: String): TableQuery {
+        filters[column] = "adj.$value"
+        return this
+    }
+
+    /**
+     * Strictly-left-of range filter (PostgREST `sl` operator, PostgreSQL `<<`).
+     *
+     * @param column Column name (range type)
+     * @param value Range literal
+     */
+    fun rangeLt(column: String, value: String): TableQuery {
+        filters[column] = "sl.$value"
+        return this
+    }
+
+    /**
+     * Strictly-right-of range filter (PostgREST `sr` operator, PostgreSQL `>>`).
+     *
+     * @param column Column name (range type)
+     * @param value Range literal
+     */
+    fun rangeGt(column: String, value: String): TableQuery {
+        filters[column] = "sr.$value"
+        return this
+    }
+
+    /**
+     * Does-not-extend-to-the-right-of range filter (PostgREST `nxr` operator, PostgreSQL `&<`).
+     *
+     * @param column Column name (range type)
+     * @param value Range literal
+     */
+    fun rangeLte(column: String, value: String): TableQuery {
+        filters[column] = "nxr.$value"
+        return this
+    }
+
+    /**
+     * Does-not-extend-to-the-left-of range filter (PostgREST `nxl` operator, PostgreSQL `&>`).
+     *
+     * @param column Column name (range type)
+     * @param value Range literal
+     */
+    fun rangeGte(column: String, value: String): TableQuery {
+        filters[column] = "nxl.$value"
+        return this
+    }
+
+    // ============ Generic Filter ============
+
+    /**
+     * Generic filter for any PostgREST operator.
+     *
+     * Use this as an escape hatch for operators not covered by named methods.
+     *
+     * Example: `.filter("id", "in", "(1,2,3)")` sends `?id=in.(1,2,3)`
+     *
+     * @param column Column name
+     * @param operator PostgREST operator string
+     * @param value Filter value
+     */
+    fun filter(column: String, operator: String, value: Any): TableQuery {
+        filters[column] = "$operator.$value"
         return this
     }
 
@@ -584,6 +780,84 @@ class UpdateQuery @PublishedApi internal constructor(
         return this
     }
 
+    /** OR combined filter. See [TableQuery.or]. */
+    fun or(filters: String): UpdateQuery {
+        this.filters["or"] = "($filters)"
+        return this
+    }
+
+    /** Negate a filter. See [TableQuery.not]. */
+    fun not(column: String, operator: String, value: Any?): UpdateQuery {
+        val formatted = when {
+            value == null -> "null"
+            value is Collection<*> -> "(${value.joinToString(",")})"
+            else -> "$value"
+        }
+        filters[column] = "not.$operator.$formatted"
+        return this
+    }
+
+    /** Contains filter (`@>`). See [TableQuery.contains]. */
+    fun contains(column: String, value: Any): UpdateQuery {
+        filters[column] = "cs.$value"
+        return this
+    }
+
+    /** Contained-by filter (`<@`). See [TableQuery.containedBy]. */
+    fun containedBy(column: String, value: Any): UpdateQuery {
+        filters[column] = "cd.$value"
+        return this
+    }
+
+    /** Full-text search filter. See [TableQuery.textSearch]. */
+    fun textSearch(column: String, query: String, type: TextSearchType = TextSearchType.PLAIN, config: String? = null): UpdateQuery {
+        val configStr = config?.let { "($it)" } ?: ""
+        filters[column] = "${type.value}${configStr}.$query"
+        return this
+    }
+
+    /** Range overlap filter (`&&`). See [TableQuery.overlaps]. */
+    fun overlaps(column: String, value: String): UpdateQuery {
+        filters[column] = "ov.$value"
+        return this
+    }
+
+    /** Range adjacent filter (`-|-`). See [TableQuery.adjacent]. */
+    fun adjacent(column: String, value: String): UpdateQuery {
+        filters[column] = "adj.$value"
+        return this
+    }
+
+    /** Strictly-left-of range filter (`<<`). See [TableQuery.rangeLt]. */
+    fun rangeLt(column: String, value: String): UpdateQuery {
+        filters[column] = "sl.$value"
+        return this
+    }
+
+    /** Strictly-right-of range filter (`>>`). See [TableQuery.rangeGt]. */
+    fun rangeGt(column: String, value: String): UpdateQuery {
+        filters[column] = "sr.$value"
+        return this
+    }
+
+    /** Does-not-extend-to-the-right-of range filter (`&<`). See [TableQuery.rangeLte]. */
+    fun rangeLte(column: String, value: String): UpdateQuery {
+        filters[column] = "nxr.$value"
+        return this
+    }
+
+    /** Does-not-extend-to-the-left-of range filter (`&>`). See [TableQuery.rangeGte]. */
+    fun rangeGte(column: String, value: String): UpdateQuery {
+        filters[column] = "nxl.$value"
+        return this
+    }
+
+    /** Generic filter. See [TableQuery.filter]. */
+    fun filter(column: String, operator: String, value: Any): UpdateQuery {
+        filters[column] = "$operator.$value"
+        return this
+    }
+
     /**
      * Return updated records in response
      */
@@ -701,6 +975,84 @@ class DeleteQuery @PublishedApi internal constructor(
      */
     fun isNull(column: String): DeleteQuery {
         filters[column] = "is.null"
+        return this
+    }
+
+    /** OR combined filter. See [TableQuery.or]. */
+    fun or(filters: String): DeleteQuery {
+        this.filters["or"] = "($filters)"
+        return this
+    }
+
+    /** Negate a filter. See [TableQuery.not]. */
+    fun not(column: String, operator: String, value: Any?): DeleteQuery {
+        val formatted = when {
+            value == null -> "null"
+            value is Collection<*> -> "(${value.joinToString(",")})"
+            else -> "$value"
+        }
+        filters[column] = "not.$operator.$formatted"
+        return this
+    }
+
+    /** Contains filter (`@>`). See [TableQuery.contains]. */
+    fun contains(column: String, value: Any): DeleteQuery {
+        filters[column] = "cs.$value"
+        return this
+    }
+
+    /** Contained-by filter (`<@`). See [TableQuery.containedBy]. */
+    fun containedBy(column: String, value: Any): DeleteQuery {
+        filters[column] = "cd.$value"
+        return this
+    }
+
+    /** Full-text search filter. See [TableQuery.textSearch]. */
+    fun textSearch(column: String, query: String, type: TextSearchType = TextSearchType.PLAIN, config: String? = null): DeleteQuery {
+        val configStr = config?.let { "($it)" } ?: ""
+        filters[column] = "${type.value}${configStr}.$query"
+        return this
+    }
+
+    /** Range overlap filter (`&&`). See [TableQuery.overlaps]. */
+    fun overlaps(column: String, value: String): DeleteQuery {
+        filters[column] = "ov.$value"
+        return this
+    }
+
+    /** Range adjacent filter (`-|-`). See [TableQuery.adjacent]. */
+    fun adjacent(column: String, value: String): DeleteQuery {
+        filters[column] = "adj.$value"
+        return this
+    }
+
+    /** Strictly-left-of range filter (`<<`). See [TableQuery.rangeLt]. */
+    fun rangeLt(column: String, value: String): DeleteQuery {
+        filters[column] = "sl.$value"
+        return this
+    }
+
+    /** Strictly-right-of range filter (`>>`). See [TableQuery.rangeGt]. */
+    fun rangeGt(column: String, value: String): DeleteQuery {
+        filters[column] = "sr.$value"
+        return this
+    }
+
+    /** Does-not-extend-to-the-right-of range filter (`&<`). See [TableQuery.rangeLte]. */
+    fun rangeLte(column: String, value: String): DeleteQuery {
+        filters[column] = "nxr.$value"
+        return this
+    }
+
+    /** Does-not-extend-to-the-left-of range filter (`&>`). See [TableQuery.rangeGte]. */
+    fun rangeGte(column: String, value: String): DeleteQuery {
+        filters[column] = "nxl.$value"
+        return this
+    }
+
+    /** Generic filter. See [TableQuery.filter]. */
+    fun filter(column: String, operator: String, value: Any): DeleteQuery {
+        filters[column] = "$operator.$value"
         return this
     }
 
