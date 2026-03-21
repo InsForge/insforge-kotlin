@@ -471,6 +471,71 @@ class Auth internal constructor(
     }
 
     /**
+     * Get OAuth authorization URL for a custom provider configured in the InsForge dashboard.
+     *
+     * Use this overload for dashboard-configured custom OAuth providers by passing
+     * the provider key exactly as configured (e.g. `"auth0-acme"`).
+     * For built-in providers use [getOAuthUrl] with [OAuthProvider].
+     *
+     * @param providerKey The custom OAuth provider key as configured in the dashboard
+     * @param redirectUri URL to redirect after authentication
+     * @param codeChallenge PKCE code challenge (SHA-256 hash of code verifier)
+     * @return Authorization URL to redirect user to
+     */
+    suspend fun getOAuthUrl(
+        providerKey: String,
+        redirectUri: String,
+        codeChallenge: String
+    ): String {
+        val response = client.httpClient.get {
+            url {
+                takeFrom(baseUrl)
+                appendPathSegments("oauth", "custom", providerKey)
+            }
+            parameter("redirect_uri", redirectUri)
+            parameter("code_challenge", codeChallenge)
+            parameter("code_challenge_method", "S256")
+        }
+
+        val result = handleAuthResponse<OAuthUrlResponse>(response)
+        return result.authUrl
+    }
+
+    /**
+     * Sign in with a custom OAuth provider configured in the InsForge dashboard.
+     *
+     * Use this overload for dashboard-configured custom OAuth providers by passing
+     * the provider key exactly as configured (e.g. `"auth0-acme"`).
+     * For built-in providers use [signInWithOAuthPage] with [OAuthProvider].
+     *
+     * @param providerKey The custom OAuth provider key as configured in the dashboard
+     * @param redirectUri Callback URL where InsForge will redirect after authentication
+     * @return The OAuth authorization URL (also opens in browser)
+     * @throws IllegalStateException if browserLauncher is not configured
+     */
+    suspend fun signInWithOAuthPage(providerKey: String, redirectUri: String): String {
+        val launcher = config.browserLauncher
+            ?: throw IllegalStateException(
+                "browserLauncher is not configured. Please configure it when installing the Auth module:\n" +
+                "install(Auth) {\n" +
+                "    browserLauncher = BrowserLauncher { url ->\n" +
+                "        // Use Chrome Custom Tabs for in-app browser experience\n" +
+                "        val customTabsIntent = CustomTabsIntent.Builder().build()\n" +
+                "        customTabsIntent.launchUrl(context, Uri.parse(url))\n" +
+                "    }\n" +
+                "}"
+            )
+
+        val pkce = PKCE.generate()
+        pendingPkceVerifier = pkce.codeVerifier
+
+        val authUrl = getOAuthUrl(providerKey, redirectUri, pkce.codeChallenge)
+        launcher.launch(authUrl)
+
+        return authUrl
+    }
+
+    /**
      * Open InsForge's hosted authentication page.
      *
      * This page supports both OAuth providers (Google, GitHub, Discord, etc.)
