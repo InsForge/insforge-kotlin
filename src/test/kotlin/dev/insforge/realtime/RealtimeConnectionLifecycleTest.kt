@@ -4,6 +4,7 @@ import dev.insforge.InsforgeClient
 import dev.insforge.TestConfig
 import dev.insforge.createInsforgeClient
 import io.socket.client.IO
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.test.runTest
@@ -143,33 +144,27 @@ class RealtimeConnectionLifecycleTest {
         val realtime = Realtime(client, RealtimeConfig(), factory, connectTimeoutMs)
         return Triple(client, realtime, factory)
     }
-
-    private suspend fun FakeRealtimeSocketFactory.awaitConnectedSocket(): FakeRealtimeSocket {
-        repeat(20) {
-            createdSockets.lastOrNull()?.takeIf { it.connectCallCount > 0 }?.let { return it }
-            delay(10)
-        }
-        error("Timed out waiting for fake socket connect()")
-    }
-
-    private suspend fun FakeRealtimeSocketFactory.awaitCreatedSocket(): FakeRealtimeSocket {
-        repeat(20) {
-            createdSockets.lastOrNull()?.let { return it }
-            delay(10)
-        }
-        error("Timed out waiting for fake socket creation")
-    }
 }
 
 private class FakeRealtimeSocketFactory : RealtimeSocketFactory {
+    private val firstCreatedSocket = CompletableDeferred<FakeRealtimeSocket>()
     val createdSockets = mutableListOf<FakeRealtimeSocket>()
 
     override fun create(baseUrl: String, options: IO.Options): RealtimeSocket {
-        return FakeRealtimeSocket().also(createdSockets::add)
+        return FakeRealtimeSocket().also { socket ->
+            createdSockets += socket
+            firstCreatedSocket.complete(socket)
+        }
     }
+
+    suspend fun awaitCreatedSocket(): FakeRealtimeSocket = firstCreatedSocket.await()
+
+    suspend fun awaitConnectedSocket(): FakeRealtimeSocket =
+        awaitCreatedSocket().also { socket -> socket.awaitConnectCall() }
 }
 
 private class FakeRealtimeSocket : RealtimeSocket {
+    private val connectCalled = CompletableDeferred<Unit>()
     private val listeners = linkedMapOf<String, MutableList<RealtimeSocketListener>>()
     private var staleListeners = emptyMap<String, List<RealtimeSocketListener>>()
 
@@ -202,6 +197,7 @@ private class FakeRealtimeSocket : RealtimeSocket {
 
     override fun connect() {
         connectCallCount++
+        connectCalled.complete(Unit)
     }
 
     override fun disconnect() {
@@ -225,6 +221,10 @@ private class FakeRealtimeSocket : RealtimeSocket {
     fun fireConnectError(message: String = "late connect error", stale: Boolean = false) {
         connected = false
         dispatch(io.socket.client.Socket.EVENT_CONNECT_ERROR, arrayOf(message), stale)
+    }
+
+    suspend fun awaitConnectCall() {
+        connectCalled.await()
     }
 
     private fun dispatch(event: String, args: Array<out Any?>, stale: Boolean) {
