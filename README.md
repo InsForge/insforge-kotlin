@@ -49,7 +49,7 @@ dependencies {
 ```bash
 git clone https://github.com/InsForge/insforge-kotlin.git
 cd insforge-kotlin
-./gradlew publishToMavenLocal
+./gradlew -Pversion=0.1.7 publishToMavenLocal
 ```
 
 ```kotlin
