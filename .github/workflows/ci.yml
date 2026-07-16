@@ -6,25 +6,28 @@ on:
     branches:
       - main
 
+permissions:
+  contents: read
+
 jobs:
   unit-tests:
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Set up JDK 17
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5.2.0
         with:
-          java-version: '17'
-          distribution: 'temurin'
+          java-version: "17"
+          distribution: "temurin"
 
       - name: Setup Gradle
-        uses: gradle/actions/setup-gradle@v3
+        uses: gradle/actions/setup-gradle@v6.2.0
 
       - name: Build and run unit tests
-        run: ./gradlew build test
+        run: ./gradlew build
 
   integration-tests:
     runs-on: ubuntu-latest
@@ -33,28 +36,33 @@ jobs:
     steps:
       - name: Check for required secrets
         id: check-secrets
+        env:
+          INSFORGE_BASE_URL: ${{ secrets.INSFORGE_BASE_URL }}
+          INSFORGE_ANON_KEY: ${{ secrets.INSFORGE_ANON_KEY }}
+          INSFORGE_TEST_EMAIL: ${{ secrets.INSFORGE_TEST_EMAIL }}
+          INSFORGE_TEST_PASSWORD: ${{ secrets.INSFORGE_TEST_PASSWORD }}
         run: |
-          if [ -z "${{ secrets.INSFORGE_BASE_URL }}" ]; then
+          if [[ -z "$INSFORGE_BASE_URL" || -z "$INSFORGE_ANON_KEY" || -z "$INSFORGE_TEST_EMAIL" || -z "$INSFORGE_TEST_PASSWORD" ]]; then
             echo "available=false" >> "$GITHUB_OUTPUT"
-            echo "Secrets not available — skipping integration tests (fork PR)"
+            echo "Integration-test secrets are incomplete; skipping integration tests"
           else
             echo "available=true" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Checkout repository
         if: steps.check-secrets.outputs.available == 'true'
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Set up JDK 17
         if: steps.check-secrets.outputs.available == 'true'
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5.2.0
         with:
-          java-version: '17'
-          distribution: 'temurin'
+          java-version: "17"
+          distribution: "temurin"
 
       - name: Setup Gradle
         if: steps.check-secrets.outputs.available == 'true'
-        uses: gradle/actions/setup-gradle@v3
+        uses: gradle/actions/setup-gradle@v6.2.0
 
       - name: Run integration tests
         if: steps.check-secrets.outputs.available == 'true'

@@ -21,7 +21,7 @@ Official Kotlin SDK for InsForge - A modern Backend-as-a-Service platform.
 ```kotlin
 // build.gradle.kts
 dependencies {
-    implementation("dev.insforge:insforge-kotlin:0.1.2")
+    implementation("dev.insforge:insforge-kotlin:0.1.7")
 }
 ```
 
@@ -40,7 +40,7 @@ repositories {
 }
 
 dependencies {
-    implementation("dev.insforge:insforge-kotlin:0.1.2")
+    implementation("dev.insforge:insforge-kotlin:0.1.7")
 }
 ```
 
@@ -59,7 +59,7 @@ repositories {
 }
 
 dependencies {
-    implementation("dev.insforge:insforge-kotlin:0.1.2-SNAPSHOT")
+    implementation("dev.insforge:insforge-kotlin:0.1.7")
 }
 ```
 
@@ -164,27 +164,30 @@ src/main/kotlin/dev/insforge/
 
 ## Release Process
 
-To create a new release and publish to Maven Central:
+Tags are the source of truth for package versions. Stable and prerelease tags
+publish to Maven Central and GitHub Packages; only stable tags create GitHub
+Releases.
 
 ```bash
-# 1. Ensure all changes are committed
-git add .
-git commit -m "your commit message"
+# Stable: publishes both packages, then creates a GitHub Release
+git tag -a v0.1.8 -m "Release v0.1.8"
+git push origin v0.1.8
 
-# 2. Create release (auto-increments version, creates tag, pushes to remote)
-./gradlew release
-
-# 3. Create GitHub Release (triggers CI to publish to Maven Central)
-gh release create v$(./gradlew currentVersion -q) \
-    --title "v$(./gradlew currentVersion -q)" \
-    --generate-notes
+# Prerelease: publishes both packages without a GitHub Release
+git tag -a v0.1.8-beta.1 -m "Release v0.1.8-beta.1"
+git push origin v0.1.8-beta.1
 ```
 
-Or as a single command:
+The publish workflow derives the Gradle version from the tag, runs the unit
+tests, signs the artifacts, and publishes them. Do not create the GitHub Release
+manually; the workflow does that after both stable package publishes succeed.
 
-```bash
-./gradlew release && gh release create v$(./gradlew currentVersion -q) --title "v$(./gradlew currentVersion -q)" --generate-notes
-```
+Maven Central currently requires a Portal user token and GPG signing key, stored
+as `MAVEN_CENTRAL_USERNAME`, `MAVEN_CENTRAL_PASSWORD`, `GPG_KEY_ID`,
+`GPG_PRIVATE_KEY`, and `GPG_PASSPHRASE` repository secrets. GitHub Packages uses
+the workflow's short-lived `GITHUB_TOKEN`; no additional GitHub token or Actions
+environment is required. Rotate the Maven Central token before its configured
+expiration date.
 
 ## Requirements
 

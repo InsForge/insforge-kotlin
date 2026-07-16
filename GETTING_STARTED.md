@@ -12,7 +12,7 @@ repositories {
 }
 
 dependencies {
-    implementation("dev.insforge:insforge-kotlin:0.1.0")
+    implementation("dev.insforge:insforge-kotlin:0.1.7")
 }
 ```
 
@@ -24,7 +24,7 @@ repositories {
 }
 
 dependencies {
-    implementation 'dev.insforge:insforge-kotlin:0.1.0'
+    implementation 'dev.insforge:insforge-kotlin:0.1.7'
 }
 ```
 
@@ -255,7 +255,7 @@ For Android projects, add the dependency to your app's `build.gradle.kts`:
 
 ```kotlin
 dependencies {
-    implementation("dev.insforge:insforge-kotlin:0.1.0")
+    implementation("dev.insforge:insforge-kotlin:0.1.7")
 }
 ```
 
@@ -312,11 +312,8 @@ class MyApplication : Application() {
 # Publish to local Maven repository
 ./gradlew publishToMavenLocal
 
-# Check current version
-./gradlew currentVersion
-
-# Create a release (requires clean git state)
-./gradlew release
+# Run the same version override used by the tag publish workflow
+./gradlew -Pversion=0.1.8 publishToMavenLocal
 ```
 
 ## Requirements
