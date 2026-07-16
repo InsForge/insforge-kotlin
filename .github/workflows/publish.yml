@@ -23,6 +23,8 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          fetch-depth: 0
 
       - name: Set up JDK 17
         uses: actions/setup-java@be666c2fcd27ec809703dec50e508c2fdc7f6654 # v5.2.0
@@ -60,6 +62,11 @@ jobs:
 
           if [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
             echo "stable=true" >> "$GITHUB_OUTPUT"
+            release_commit="$(git rev-parse "${RELEASE_TAG}^{commit}")"
+            if ! git merge-base --is-ancestor "$release_commit" origin/main; then
+              echo "Stable release $RELEASE_TAG must point to a commit contained in main." >&2
+              exit 1
+            fi
           else
             echo "stable=false" >> "$GITHUB_OUTPUT"
           fi
