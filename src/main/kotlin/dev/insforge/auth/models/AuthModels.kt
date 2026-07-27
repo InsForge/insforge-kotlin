@@ -89,6 +89,43 @@ data class SignInResponse(
     val refreshToken: String? = null
 )
 
+// ============ Email OTP Sign-In ============
+
+/**
+ * Request to send a one-time sign-in code to an email address.
+ */
+@Serializable
+data class SendOtpRequest(
+    val email: String
+)
+
+/**
+ * Generic response after requesting a sign-in code.
+ *
+ * The response is intentionally the same whether or not an account exists,
+ * to avoid account enumeration.
+ */
+@Serializable
+data class SendOtpResponse(
+    val success: Boolean,
+    val message: String
+)
+
+/**
+ * Request body to verify an email sign-in code and create a session.
+ *
+ * @param method Session method discriminator, always "otp" for this flow
+ * @param email The email the code was sent to
+ * @param name Optional display name, applied only when a new user is created
+ */
+@Serializable
+data class VerifyOtpRequest(
+    val method: String,
+    val email: String,
+    val otp: String,
+    val name: String? = null
+)
+
 // ============ Email Verification ============
 
 @Serializable

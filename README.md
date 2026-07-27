@@ -7,7 +7,7 @@ Official Kotlin SDK for InsForge - A modern Backend-as-a-Service platform.
 
 ## Features
 
-- 🔐 **Authentication** - Email/password, OAuth, email verification, password reset
+- 🔐 **Authentication** - Email/password, email OTP sign-in, OAuth, email verification, password reset
 - 📊 **Database** - PostgREST-style API with type-safe queries
 - 📦 **Storage** - S3-compatible object storage with presigned URLs
 - ⚡ **Functions** - Serverless functions in Deno runtime
@@ -209,9 +209,9 @@ expiration date.
 
 | Module | Features |
 |--------|----------|
-| Auth | Sign up/in, Email verification, Password reset, OAuth, Session persistence |
+| Auth | Sign up/in, Email OTP sign-in, Email verification, Password reset, OAuth, Session persistence |
 | Database | CRUD, Query builder, Type-safe queries, Raw queries for joins |
-| Storage | Upload/Download, Buckets, Presigned URLs, S3 compatible |
+| Storage | Upload/Download, Buckets, Batch delete, Presigned URLs, S3 compatible |
 | Functions | Invoke serverless functions |
 | Realtime | Pub/sub channels, Connection state management |
 | AI | Chat completion, Image generation, Streaming |
