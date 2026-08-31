@@ -62,6 +62,9 @@ interface BucketApi {
      * - For local storage: Direct upload to the server
      * - For S3: Gets presigned URL, uploads to S3, then confirms
      *
+     * Standard PUT semantics: uploading to an existing key replaces the
+     * current object in place.
+     *
      * @param path The path/key where the file will be stored
      * @param data The file data as ByteArray
      * @param options Additional upload options (content type, upsert, metadata)
@@ -76,9 +79,13 @@ interface BucketApi {
     ): FileUploadResponse
 
     /**
-     * Upload a file to the bucket with auto-generated key.
+     * Upload a file to the bucket under an automatically generated,
+     * collision-free key.
      *
-     * The server will generate a unique key based on the filename.
+     * The key is derived client-side from the filename (sanitized base +
+     * timestamp + random suffix) and uploaded through the standard [upload]
+     * path, so repeated uploads of the same file never overwrite each other.
+     * The storage API has no server-side key minting.
      *
      * @param filename Original filename (used for key generation and content type detection)
      * @param data The file data as ByteArray
@@ -108,7 +115,8 @@ interface BucketApi {
     ): FileUploadResponse
 
     /**
-     * Upload a file from java.io.File with auto-generated key.
+     * Upload a file from java.io.File under an automatically generated,
+     * collision-free key (see [uploadWithAutoKey]).
      *
      * @param file The File to upload (filename used for key generation)
      * @param options Additional upload options
@@ -326,25 +334,15 @@ internal class BucketApiImpl(
         data: ByteArray,
         options: UploadOptions.() -> Unit
     ): FileUploadResponse {
-        require(data.isNotEmpty()) { "The data to upload should not be empty" }
-
         val uploadOptions = UploadOptions().apply(options)
-        val contentType = uploadOptions.contentType
-            ?: detectContentType(filename)
-            ?: "application/octet-stream"
 
-        // Get upload strategy with filename for auto-key generation
-        val strategy = getUploadStrategy(filename, contentType, data.size.toLong())
-
-        return when (strategy.method) {
-            UploadMethod.DIRECT -> {
-                // Direct upload with auto-generated key
-                uploadDirectAutoKey(filename, data, contentType, uploadOptions)
-            }
-            UploadMethod.PRESIGNED -> {
-                // Upload to S3 using presigned URL, then confirm
-                uploadPresigned(strategy, data, contentType, uploadOptions)
-            }
+        // Auto-key generation is a client-side convenience — the storage API
+        // has no server-side key minting — so mint a unique, collision-free
+        // key here and upload through the standard upload() path.
+        return upload(generateObjectKey(filename), data) {
+            contentType = uploadOptions.contentType ?: detectContentType(filename)
+            upsert = uploadOptions.upsert
+            metadata = uploadOptions.metadata
         }
     }
 
@@ -429,42 +427,6 @@ internal class BucketApiImpl(
         )
     }
 
-    private suspend fun uploadDirectAutoKey(
-        filename: String,
-        data: ByteArray,
-        contentType: String,
-        options: UploadOptions
-    ): FileUploadResponse {
-        val response = httpClient.post("$baseUrl/objects") {
-            if (options.upsert) {
-                header(BucketApi.UPSERT_HEADER, "true")
-            }
-            options.metadata?.let { metadata ->
-                header(BucketApi.METADATA_HEADER, json.encodeToString(
-                    kotlinx.serialization.serializer<Map<String, String>>(),
-                    metadata
-                ))
-            }
-            setBody(MultiPartFormDataContent(
-                formData {
-                    append("file", data, Headers.build {
-                        append(HttpHeaders.ContentType, contentType)
-                        append(HttpHeaders.ContentDisposition, "filename=\"$filename\"")
-                    })
-                }
-            ))
-        }
-
-        val storedFile = handleResponse<StoredFile>(response)
-        return FileUploadResponse(
-            bucket = storedFile.bucket,
-            key = storedFile.key,
-            size = storedFile.size,
-            mimeType = storedFile.mimeType,
-            url = storedFile.url
-        )
-    }
-
     @Suppress("UNUSED_PARAMETER")
     private suspend fun uploadPresigned(
         strategy: UploadStrategy,
@@ -508,7 +470,8 @@ internal class BucketApiImpl(
         // Extract ETag from S3 response if available
         val etag = s3Response.headers["ETag"]?.removeSurrounding("\"")
 
-        // Confirm the upload with InsForge
+        // Confirm the upload with InsForge. Confirm create-or-replaces the
+        // metadata row, matching the standard PUT semantics.
         if (strategy.confirmRequired) {
             val storedFile = confirmUpload(
                 objectKey = strategy.key,
@@ -742,3 +705,24 @@ internal class BucketApiImpl(
         )
     }
 }
+
+/**
+ * Generate a unique object key from a filename: `<sanitized-base>-<timestamp>-<random><ext>`.
+ * Auto-key generation is a client-side convenience — the storage API has no
+ * server-side key minting — so [BucketApi.uploadWithAutoKey] produces the key
+ * here and then uploads through the standard upload path.
+ */
+internal fun generateObjectKey(filename: String): String {
+    val dotIndex = filename.lastIndexOf('.')
+    val hasExt = dotIndex > 0
+    val ext = if (hasExt) filename.substring(dotIndex) else ""
+    val base = if (hasExt) filename.substring(0, dotIndex) else filename
+    val sanitizedBase = base.replace(Regex("[^a-zA-Z0-9-_]"), "-").take(32).ifEmpty { "file" }
+    val timestamp = System.currentTimeMillis()
+    val random = buildString {
+        repeat(6) { append(KEY_RANDOM_ALPHABET.random()) }
+    }
+    return "$sanitizedBase-$timestamp-$random$ext"
+}
+
+private const val KEY_RANDOM_ALPHABET = "0123456789abcdefghijklmnopqrstuvwxyz"
