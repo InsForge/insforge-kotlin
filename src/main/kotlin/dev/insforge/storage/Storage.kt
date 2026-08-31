@@ -51,6 +51,10 @@ import kotlinx.serialization.json.Json
  *
  * // Delete a file
  * bucket.delete("user123.jpg")
+ *
+ * // Delete multiple files in one request (maximum 1000 keys)
+ * val response = bucket.delete(listOf("a.jpg", "b.jpg"))
+ * // response.results: one entry per key with status deleted / notFound / failed
  * ```
  *
  * ## Bucket Management (Admin)

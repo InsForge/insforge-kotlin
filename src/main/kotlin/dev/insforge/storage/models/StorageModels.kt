@@ -111,6 +111,45 @@ data class DeleteFileResponse(
     val message: String
 )
 
+/**
+ * Request to delete multiple objects in a single call
+ */
+@Serializable
+data class DeleteObjectsRequest(
+    val keys: List<String>
+)
+
+/**
+ * Per-key outcome of a batch delete
+ */
+@Serializable
+enum class DeleteObjectStatus {
+    @SerialName("deleted")
+    DELETED,
+    @SerialName("notFound")
+    NOT_FOUND,
+    @SerialName("failed")
+    FAILED
+}
+
+/**
+ * Result for a single key in a batch delete
+ */
+@Serializable
+data class DeleteObjectResult(
+    val key: String,
+    val status: DeleteObjectStatus,
+    val message: String? = null
+)
+
+/**
+ * Response when deleting multiple objects — one result per requested key
+ */
+@Serializable
+data class DeleteObjectsResponse(
+    val results: List<DeleteObjectResult>
+)
+
 // ============ Upload Strategy ============
 
 /**

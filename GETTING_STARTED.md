@@ -172,6 +172,7 @@ src/main/kotlin/dev/insforge/
 
 ### Authentication
 - User registration/login
+- Passwordless email OTP sign-in
 - Email verification (OTP + magic link)
 - Password reset
 - OAuth integration (Google, GitHub, etc.)

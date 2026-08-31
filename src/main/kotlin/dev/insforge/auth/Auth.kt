@@ -230,6 +230,51 @@ class Auth internal constructor(
     }
 
     /**
+     * Send a one-time sign-in code to an email address (passwordless sign-in).
+     *
+     * The response is intentionally generic whether or not an account exists,
+     * to avoid account enumeration. Complete the flow with [verifyOtp].
+     *
+     * @param email Email address to send the 6-digit sign-in code to
+     * @return SendOtpResponse with a generic success message
+     */
+    suspend fun signInWithOtp(email: String): SendOtpResponse {
+        val response = client.httpClient.post("$baseUrl/email/send-otp") {
+            contentType(ContentType.Application.Json)
+            setBody(SendOtpRequest(email))
+        }
+
+        return handleAuthResponse(response)
+    }
+
+    /**
+     * Verify an email sign-in code and create a session.
+     *
+     * If the email is new, a verified passwordless user is created; [name] sets
+     * the display name only on that first-time creation.
+     *
+     * @param email Email the code was sent to
+     * @param otp 6-digit code received by email
+     * @param name Optional display name for first-time user creation
+     * @return SignInResponse with user and access token
+     */
+    suspend fun verifyOtp(
+        email: String,
+        otp: String,
+        name: String? = null
+    ): SignInResponse {
+        val response = client.httpClient.post("$baseUrl/sessions") {
+            parameter("client_type", config.clientType.value)
+            contentType(ContentType.Application.Json)
+            setBody(VerifyOtpRequest(method = "otp", email = email, otp = otp, name = name))
+        }
+
+        return handleAuthResponse<SignInResponse>(response).also { result ->
+            saveSession(result.user, result.accessToken, result.refreshToken)
+        }
+    }
+
+    /**
      * Sign out the current user
      */
     suspend fun signOut() {

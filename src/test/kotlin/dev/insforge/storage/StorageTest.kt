@@ -463,9 +463,13 @@ class StorageTest {
                 bucket.upload(key, "Delete me".toByteArray())
             }
 
-            // Delete all
-            bucket.delete(keys)
+            // Delete all in a single batch request
+            val response = bucket.delete(keys)
             println("Deleted ${keys.size} files")
+
+            // One result per requested key
+            assertEquals(keys.size, response.results.size)
+            assertEquals(keys.toSet(), response.results.map { it.key }.toSet())
 
             // Verify all deleted
             keys.forEach { key ->

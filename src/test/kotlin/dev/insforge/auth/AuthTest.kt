@@ -127,6 +127,37 @@ class AuthTest {
         }
     }
 
+    // ============ Email OTP Sign-In Tests ============
+
+    @Test
+    fun `test signInWithOtp returns generic response`() = runTest {
+        val email = "otp_test@example.com"
+
+        try {
+            val response = client.auth.signInWithOtp(email)
+            // Enumeration-safe: generic success whether or not the account exists
+            assertTrue(response.success)
+            assertTrue(response.message.isNotEmpty())
+            println("OTP requested: ${response.message}")
+        } catch (e: InsforgeHttpException) {
+            println("Send OTP response (expected if OTP sign-in is disabled): ${e.message}")
+        }
+    }
+
+    @Test
+    fun `test verifyOtp with invalid code fails`() = runTest {
+        val exception = assertFailsWith<InsforgeHttpException> {
+            client.auth.verifyOtp(
+                email = "otp_test@example.com",
+                otp = "000000"
+            )
+        }
+        println("Expected error: ${exception.error} - ${exception.message}")
+
+        // No session should be created on failure
+        assertNull(client.auth.currentSession.value)
+    }
+
     // ============ Password Reset Tests ============
 
     @Test

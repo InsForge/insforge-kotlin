@@ -166,18 +166,26 @@ interface BucketApi {
     suspend fun delete(path: String)
 
     /**
-     * Delete multiple files from the bucket.
+     * Delete multiple files from the bucket in a single batch request.
      *
-     * @param paths The paths/keys of the files to delete
+     * The batch endpoint accepts at most 1000 keys per request and returns
+     * one result per key ([DeleteObjectStatus.DELETED], [DeleteObjectStatus.NOT_FOUND],
+     * or [DeleteObjectStatus.FAILED]) instead of failing the whole call.
+     *
+     * @param paths The paths/keys of the files to delete (maximum 1000)
+     * @return DeleteObjectsResponse with one result per requested key
+     * @throws InsforgeHttpException if the batch request itself is rejected
+     *         (e.g. empty list or more than 1000 keys)
      */
-    suspend fun delete(paths: Collection<String>)
+    suspend fun delete(paths: Collection<String>): DeleteObjectsResponse
 
     /**
-     * Delete multiple files from the bucket.
+     * Delete multiple files from the bucket in a single batch request.
      *
-     * @param paths The paths/keys of the files to delete
+     * @param paths The paths/keys of the files to delete (maximum 1000)
+     * @return DeleteObjectsResponse with one result per requested key
      */
-    suspend fun delete(vararg paths: String) = delete(paths.toList())
+    suspend fun delete(vararg paths: String): DeleteObjectsResponse = delete(paths.toList())
 
     // ============ List Operations ============
 
@@ -592,11 +600,13 @@ internal class BucketApiImpl(
         handleResponse<DeleteFileResponse>(response)
     }
 
-    override suspend fun delete(paths: Collection<String>) {
-        // Delete files one by one (API doesn't support batch delete)
-        paths.forEach { path ->
-            delete(path)
+    override suspend fun delete(paths: Collection<String>): DeleteObjectsResponse {
+        // Batch delete in a single request (maximum 1000 keys per call)
+        val response = httpClient.delete("$baseUrl/objects") {
+            contentType(ContentType.Application.Json)
+            setBody(DeleteObjectsRequest(paths.toList()))
         }
+        return handleResponse(response)
     }
 
     // ============ List Operations ============
